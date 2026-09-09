@@ -1,4 +1,6 @@
 package minecraft_ai_guide.client;
+import minecraft_ai_guide.client.guide.TargetFinder;
+import net.minecraft.core.BlockPos;
 import minecraft_ai_guide.client.guide.GuideStep;
 import minecraft_ai_guide.client.guide.StoneAxeGoal;
 import net.fabricmc.api.ClientModInitializer;
@@ -37,6 +39,22 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
             return;
         }
 		GuideStep currentStep = StoneAxeGoal.getNextStep(minecraft);
+		String targetText = "";
+
+if (currentStep.getStepId().equals("collect_log")) {
+    BlockPos treePos = TargetFinder.findNearestLog(minecraft);
+
+    if (treePos != null) {
+        double distance = minecraft.player.blockPosition()
+                .distSqr(treePos);
+
+        int blocksAway = (int) Math.sqrt(distance);
+
+        targetText = "Tree found: " + blocksAway + " blocks away";
+    } else {
+        targetText = "No tree found nearby";
+    }
+}
 
         
 
@@ -57,5 +75,15 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
                 0xFFFFFFFF,
                 true
         );
+		if (!targetText.isEmpty()) {
+    graphics.text(
+            minecraft.font,
+            targetText,
+            10,
+            34,
+            0xFFFFFFFF,
+            true
+    );
+}
     }
 }
