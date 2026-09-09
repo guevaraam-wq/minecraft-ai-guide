@@ -1,5 +1,6 @@
 package minecraft_ai_guide.client;
-
+import minecraft_ai_guide.client.guide.GuideStep;
+import minecraft_ai_guide.client.guide.StoneAxeGoal;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
@@ -35,17 +36,9 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
         if (minecraft.player == null) {
             return;
         }
+		GuideStep currentStep = StoneAxeGoal.getNextStep(minecraft);
 
-        boolean hasLog = minecraft.player.getInventory()
-                .contains(stack -> stack.is(ItemTags.LOGS));
-
-        String nextStep;
-
-        if (hasLog) {
-            nextStep = "Log collected! Next step: Make wooden planks";
-        } else {
-            nextStep = "Next step: Collect a log";
-        }
+        
 
         graphics.text(
                 minecraft.font,
@@ -58,7 +51,7 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
 
         graphics.text(
                 minecraft.font,
-                nextStep,
+                currentStep.getInstruction(),
                 10,
                 22,
                 0xFFFFFFFF,
