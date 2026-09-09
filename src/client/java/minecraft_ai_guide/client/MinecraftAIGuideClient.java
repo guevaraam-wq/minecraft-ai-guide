@@ -1,4 +1,5 @@
 package minecraft_ai_guide.client;
+import net.minecraft.core.BlockPos;
 import minecraft_ai_guide.client.guide.TargetFinder;
 import net.minecraft.core.BlockPos;
 import minecraft_ai_guide.client.guide.GuideStep;
@@ -40,17 +41,54 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
         }
 		GuideStep currentStep = StoneAxeGoal.getNextStep(minecraft);
 		String targetText = "";
+		String directionText = "";
 
 if (currentStep.getStepId().equals("collect_log")) {
+
     BlockPos treePos = TargetFinder.findNearestLog(minecraft);
 
     if (treePos != null) {
+
         double distance = minecraft.player.blockPosition()
                 .distSqr(treePos);
 
         int blocksAway = (int) Math.sqrt(distance);
 
         targetText = "Tree found: " + blocksAway + " blocks away";
+
+        double deltaX =
+                treePos.getX() - minecraft.player.getX();
+
+        double deltaZ =
+                treePos.getZ() - minecraft.player.getZ();
+
+        double targetAngle =
+                Math.toDegrees(Math.atan2(-deltaX, deltaZ));
+
+        double playerAngle =
+                minecraft.player.getYRot();
+
+        double angleDifference =
+                targetAngle - playerAngle;
+
+        while (angleDifference > 180) {
+            angleDifference -= 360;
+        }
+
+        while (angleDifference < -180) {
+            angleDifference += 360;
+        }
+
+        if (angleDifference > -25 && angleDifference < 25) {
+            directionText = "Direction: Straight ahead";
+        } else if (angleDifference >= 25 && angleDifference < 155) {
+            directionText = "Direction: Left";
+        } else if (angleDifference <= -25 && angleDifference > -155) {
+            directionText = "Direction: Right";
+        } else {
+            directionText = "Direction: Behind you";
+        }
+
     } else {
         targetText = "No tree found nearby";
     }
@@ -81,6 +119,16 @@ if (currentStep.getStepId().equals("collect_log")) {
             targetText,
             10,
             34,
+            0xFFFFFFFF,
+            true
+    );
+}
+if (!directionText.isEmpty()) {
+    graphics.text(
+            minecraft.font,
+            directionText,
+            10,
+            46,
             0xFFFFFFFF,
             true
     );
