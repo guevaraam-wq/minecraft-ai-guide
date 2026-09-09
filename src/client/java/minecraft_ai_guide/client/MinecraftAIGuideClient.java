@@ -1,4 +1,5 @@
 package minecraft_ai_guide.client;
+import minecraft_ai_guide.client.guide.PathGuide;
 import net.minecraft.core.BlockPos;
 import minecraft_ai_guide.client.guide.TargetFinder;
 import net.minecraft.core.BlockPos;
@@ -20,6 +21,8 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
                     "minecraft-ai-guide",
                     "accessibility_guide"
             );
+	private static long lastPathUpdate = 0;
+	private static final long PATH_UPDATE_INTERVAL = 500;
 
     @Override
     public void onInitializeClient() {
@@ -48,6 +51,12 @@ if (currentStep.getStepId().equals("collect_log")) {
     BlockPos treePos = TargetFinder.findNearestLog(minecraft);
 
     if (treePos != null) {
+		long currentTime = System.currentTimeMillis();
+
+		if (currentTime - lastPathUpdate >= PATH_UPDATE_INTERVAL) {
+    		PathGuide.showPath(minecraft, treePos);
+    		lastPathUpdate = currentTime;
+		}
 
         double distance = minecraft.player.blockPosition()
                 .distSqr(treePos);
