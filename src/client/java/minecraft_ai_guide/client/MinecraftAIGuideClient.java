@@ -7,6 +7,7 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.resources.Identifier;
+import net.minecraft.tags.ItemTags;
 
 public class MinecraftAIGuideClient implements ClientModInitializer {
 
@@ -18,7 +19,6 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-
         HudElementRegistry.attachElementBefore(
                 VanillaHudElements.CHAT,
                 GUIDE_HUD,
@@ -36,11 +36,31 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
             return;
         }
 
+        boolean hasLog = minecraft.player.getInventory()
+                .contains(stack -> stack.is(ItemTags.LOGS));
+
+        String nextStep;
+
+        if (hasLog) {
+            nextStep = "Log collected! Next step: Make wooden planks";
+        } else {
+            nextStep = "Next step: Collect a log";
+        }
+
         graphics.text(
                 minecraft.font,
-                "AI Accessibility Guide: Ready",
+                "Goal: Craft a Stone Axe",
                 10,
                 10,
+                0xFFFFFFFF,
+                true
+        );
+
+        graphics.text(
+                minecraft.font,
+                nextStep,
+                10,
+                22,
                 0xFFFFFFFF,
                 true
         );
