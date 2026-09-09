@@ -4,7 +4,9 @@ import net.minecraft.core.BlockPos;
 import minecraft_ai_guide.client.guide.TargetFinder;
 import net.minecraft.core.BlockPos;
 import minecraft_ai_guide.client.guide.GuideStep;
-import minecraft_ai_guide.client.guide.StoneAxeGoal;
+import minecraft_ai_guide.client.guide.StoneAxeTaskGraph;
+import minecraft_ai_guide.client.guide.TaskNode;
+import minecraft_ai_guide.client.guide.TaskPlanner;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
@@ -21,6 +23,8 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
                     "minecraft-ai-guide",
                     "accessibility_guide"
             );
+	private static final TaskNode STONE_AXE_GOAL =
+        StoneAxeTaskGraph.createGraph();
 	private static long lastPathUpdate = 0;
 	private static final long PATH_UPDATE_INTERVAL = 500;
 	private static BlockPos cachedTreeTarget = null;
@@ -46,7 +50,11 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
         if (minecraft.player == null) {
             return;
         }
-		GuideStep currentStep = StoneAxeGoal.getNextStep(minecraft);
+		GuideStep currentStep =
+        TaskPlanner.getNextStep(
+                minecraft,
+                STONE_AXE_GOAL
+        );
 		String targetText = "";
 		String directionText = "";
 
