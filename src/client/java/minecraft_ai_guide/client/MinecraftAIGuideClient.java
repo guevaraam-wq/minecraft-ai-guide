@@ -23,6 +23,10 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
             );
 	private static long lastPathUpdate = 0;
 	private static final long PATH_UPDATE_INTERVAL = 500;
+	private static BlockPos cachedTreeTarget = null;
+
+	private static long lastTargetSearch = 0;
+	private static final long TARGET_SEARCH_INTERVAL = 1000;
 
     @Override
     public void onInitializeClient() {
@@ -48,10 +52,20 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
 
 if (currentStep.getStepId().equals("collect_log")) {
 
-    BlockPos treePos = TargetFinder.findNearestLog(minecraft);
+    long currentTime = System.currentTimeMillis();
+
+if (currentTime - lastTargetSearch >= TARGET_SEARCH_INTERVAL
+        || cachedTreeTarget == null) {
+
+    cachedTreeTarget =
+            TargetFinder.findNearestLog(minecraft);
+
+    lastTargetSearch = currentTime;
+}
+
+BlockPos treePos = cachedTreeTarget;
 
     if (treePos != null) {
-		long currentTime = System.currentTimeMillis();
 
 		if (currentTime - lastPathUpdate >= PATH_UPDATE_INTERVAL) {
     		PathGuide.showPath(minecraft, treePos);
