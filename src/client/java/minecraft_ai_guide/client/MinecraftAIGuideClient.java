@@ -3,6 +3,7 @@ import minecraft_ai_guide.client.guide.PathGuide;
 import net.minecraft.core.BlockPos;
 import minecraft_ai_guide.client.guide.TargetFinder;
 import net.minecraft.core.BlockPos;
+import minecraft_ai_guide.client.guide.CraftingRequirement;
 import minecraft_ai_guide.client.guide.GuideStep;
 import minecraft_ai_guide.client.guide.StoneAxeTaskGraph;
 import minecraft_ai_guide.client.guide.TaskNode;
@@ -40,7 +41,27 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
                 MinecraftAIGuideClient::renderGuide
         );
     }
+    private static TaskNode findTaskById(
+        TaskNode task,
+        String id
+) {
 
+    if (task.getId().equals(id)) {
+        return task;
+    }
+
+    for (TaskNode dependency : task.getDependencies()) {
+
+        TaskNode result =
+                findTaskById(dependency, id);
+
+        if (result != null) {
+            return result;
+        }
+    }
+
+    return null;
+}
     private static void renderGuide(
             GuiGraphicsExtractor graphics,
             DeltaTracker deltaTracker
@@ -55,6 +76,62 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
                 minecraft,
                 STONE_AXE_GOAL
         );
+        TaskNode currentTask =
+        findTaskById(
+                STONE_AXE_GOAL,
+                currentStep.getStepId()
+        );
+
+int requirementY = 46;
+
+if (currentTask != null &&
+        !currentTask.getRequirements().isEmpty()) {
+
+    graphics.text(
+            minecraft.font,
+            "Materials:",
+            10,
+            requirementY,
+            0xFFFFFFFF,
+            true
+    );
+
+    requirementY += 12;
+
+    for (CraftingRequirement requirement :
+            currentTask.getRequirements()) {
+
+        int amountOwned =
+                minecraft.player
+                        .getInventory()
+                        .countItem(requirement.getItem());
+
+        boolean hasEnough =
+                amountOwned >= requirement.getAmount();
+
+        String symbol =
+                hasEnough ? "[X] " : "[ ] ";
+
+        String requirementText =
+                symbol
+                + requirement.getDisplayName()
+                + ": "
+                + amountOwned
+                + "/"
+                + requirement.getAmount();
+
+        graphics.text(
+                minecraft.font,
+                requirementText,
+                10,
+                requirementY,
+                0xFFFFFFFF,
+                true
+        );
+
+        requirementY += 12;
+    }
+}
 		String targetText = "";
 		String directionText = "";
 

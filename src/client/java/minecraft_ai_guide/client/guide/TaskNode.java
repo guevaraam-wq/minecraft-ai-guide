@@ -11,6 +11,9 @@ public class TaskNode {
     private final List<TaskNode> dependencies =
             new ArrayList<>();
 
+    private final List<CraftingRequirement> requirements =
+            new ArrayList<>();
+
     public TaskNode(
             String id,
             String instruction
@@ -23,6 +26,12 @@ public class TaskNode {
         dependencies.add(dependency);
     }
 
+    public void addRequirement(
+            CraftingRequirement requirement
+    ) {
+        requirements.add(requirement);
+    }
+
     public String getId() {
         return id;
     }
@@ -33,5 +42,9 @@ public class TaskNode {
 
     public List<TaskNode> getDependencies() {
         return dependencies;
+    }
+
+    public List<CraftingRequirement> getRequirements() {
+        return requirements;
     }
 }

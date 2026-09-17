@@ -1,5 +1,7 @@
 package minecraft_ai_guide.client.guide;
 
+import net.minecraft.world.item.Items;
+
 public class StoneAxeTaskGraph {
 
     public static TaskNode createGraph() {
@@ -39,7 +41,59 @@ public class StoneAxeTaskGraph {
                 "Craft a stone axe"
         );
 
-        // Define dependencies
+
+        // MATERIAL REQUIREMENTS
+
+        craftSticks.addRequirement(
+                new CraftingRequirement(
+                        Items.OAK_PLANKS,
+                        2,
+                        "Wooden Planks"
+                )
+        );
+
+        craftCraftingTable.addRequirement(
+                new CraftingRequirement(
+                        Items.OAK_PLANKS,
+                        4,
+                        "Wooden Planks"
+                )
+        );
+
+        craftWoodenPickaxe.addRequirement(
+                new CraftingRequirement(
+                        Items.OAK_PLANKS,
+                        3,
+                        "Wooden Planks"
+                )
+        );
+
+        craftWoodenPickaxe.addRequirement(
+                new CraftingRequirement(
+                        Items.STICK,
+                        2,
+                        "Sticks"
+                )
+        );
+
+        craftStoneAxe.addRequirement(
+                new CraftingRequirement(
+                        Items.COBBLESTONE,
+                        3,
+                        "Cobblestone"
+                )
+        );
+
+        craftStoneAxe.addRequirement(
+                new CraftingRequirement(
+                        Items.STICK,
+                        2,
+                        "Sticks"
+                )
+        );
+
+
+        // TASK DEPENDENCIES
 
         craftPlanks.addDependency(collectLog);
 
