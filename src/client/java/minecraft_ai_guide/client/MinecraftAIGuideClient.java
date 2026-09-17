@@ -101,11 +101,21 @@ if (currentTask != null &&
     for (CraftingRequirement requirement :
             currentTask.getRequirements()) {
 
-        int amountOwned =
-                minecraft.player
-                        .getInventory()
-                        .countItem(requirement.getItem());
+        int amountOwned = 0;
 
+for (int i = 0;
+     i < minecraft.player.getInventory().getContainerSize();
+     i++) {
+
+    var stack =
+            minecraft.player
+                    .getInventory()
+                    .getItem(i);
+
+    if (requirement.matches(stack)) {
+        amountOwned += stack.getCount();
+    }
+}
         boolean hasEnough =
                 amountOwned >= requirement.getAmount();
 

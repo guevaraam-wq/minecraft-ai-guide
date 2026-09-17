@@ -1,7 +1,7 @@
 package minecraft_ai_guide.client.guide;
 
 import net.minecraft.world.item.Items;
-
+import net.minecraft.tags.ItemTags;
 public class StoneAxeTaskGraph {
 
     public static TaskNode createGraph() {
@@ -46,7 +46,7 @@ public class StoneAxeTaskGraph {
 
         craftSticks.addRequirement(
                 new CraftingRequirement(
-                        Items.OAK_PLANKS,
+                        ItemTags.PLANKS,
                         2,
                         "Wooden Planks"
                 )
@@ -54,7 +54,7 @@ public class StoneAxeTaskGraph {
 
         craftCraftingTable.addRequirement(
                 new CraftingRequirement(
-                        Items.OAK_PLANKS,
+                        ItemTags.PLANKS,
                         4,
                         "Wooden Planks"
                 )
@@ -62,7 +62,7 @@ public class StoneAxeTaskGraph {
 
         craftWoodenPickaxe.addRequirement(
                 new CraftingRequirement(
-                        Items.OAK_PLANKS,
+                        ItemTags.PLANKS,
                         3,
                         "Wooden Planks"
                 )
