@@ -1,0 +1,19 @@
+package minecraft_ai_guide.agent;
+
+public enum AgentGoal {
+
+    COMPLETE_GAME,
+
+    ACQUIRE_WOOD,
+    DEVELOP_TOOLS,
+    ACQUIRE_FOOD,
+    ACQUIRE_IRON,
+    PREPARE_FOR_NETHER,
+    ENTER_NETHER,
+    FIND_FORTRESS,
+    ACQUIRE_BLAZE_RODS,
+    ACQUIRE_ENDER_PEARLS,
+    FIND_STRONGHOLD,
+    ENTER_END,
+    DEFEAT_DRAGON
+}

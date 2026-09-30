@@ -1,0 +1,458 @@
+package minecraft_ai_guide.agent;
+
+import net.minecraft.client.Minecraft;
+
+public class MinecraftAgent {
+    
+
+    private final ExperienceMemory memory =
+            new ExperienceMemory();
+
+    private final AgentGoalManager goalManager =
+            new AgentGoalManager();
+
+    private GameState previousState;
+    private AgentAction previousAction;
+    private String previousActionTarget;
+
+    private boolean running = false;
+
+    private long lastDecisionTime = 0;
+
+    private static final long DECISION_INTERVAL = 1000;
+
+
+    // =========================================================
+    // START
+    // =========================================================
+
+    public void start(Minecraft minecraft) {
+
+        if (minecraft.player == null) {
+            return;
+        }
+
+        running = true;
+
+        previousState =
+                GameState.observe(minecraft);
+
+        previousAction = null;
+
+        lastDecisionTime = 0;
+
+        System.out.println(
+                "[AI Agent] Training started"
+        );
+    }
+
+
+    // =========================================================
+    // STOP
+    // =========================================================
+
+    public void stop() {
+
+        running = false;
+
+        System.out.println(
+                "[AI Agent] Training stopped"
+        );
+
+        System.out.println(
+                "[AI Agent] Experiences collected: "
+                        + memory.size()
+        );
+    }
+
+
+    // =========================================================
+    // UPDATE
+    // =========================================================
+
+    public void update(Minecraft minecraft) {
+
+        if (!running
+                || minecraft.player == null) {
+            return;
+        }
+
+        /*
+         * Allow the currently executing action
+         * to continue.
+         */
+        ActionExecutor.update(minecraft);
+
+        if (ActionExecutor.isBusy()) {
+            return;
+        }
+        /*
+ * Finish any crafting operation that is
+ * currently waiting for its result.
+ */
+if (CraftingExecutor.isCrafting()) {
+
+    CraftingExecutor.craft(minecraft);
+
+    return;
+}
+
+        long now =
+                System.currentTimeMillis();
+
+        if (now - lastDecisionTime
+                < DECISION_INTERVAL) {
+            return;
+        }
+
+
+        // -----------------------------------------------------
+        // Observe current state
+        // -----------------------------------------------------
+
+        GameState currentState =
+                GameState.observe(minecraft);
+
+
+        // -----------------------------------------------------
+        // Determine current goal
+        // -----------------------------------------------------
+
+        AgentGoal currentGoal =
+                goalManager.evaluate(
+                        currentState
+                );
+
+        System.out.println(
+                "[AI Agent] Overall goal: "
+                        + goalManager.getOverallGoal()
+        );
+
+        System.out.println(
+                "[AI Agent] Current subgoal: "
+                        + currentGoal
+        );
+
+
+        // -----------------------------------------------------
+        // Evaluate previous action
+        if (previousState != null
+        && previousAction != null) {
+
+    double reward =
+            RewardSystem.calculate(
+                    previousState,
+                    currentState
+            );
+
+    AgentExperience experience =
+            new AgentExperience(
+                    previousState,
+                    previousAction,
+                    currentState,
+                    reward,
+                    previousActionTarget
+            );
+            /*
+ * A crafting attempt should only receive a
+ * positive learning signal when the item it
+ * intended to craft was actually acquired.
+ */
+if (previousAction == AgentAction.CRAFT
+        && previousActionTarget != null) {
+
+    if (experience.targetWasAcquired()) {
+
+        reward += 0.50;
+
+        System.out.println(
+                "[AI Learning] Successful craft of "
+                        + previousActionTarget
+        );
+
+    } else {
+
+        reward -= 0.50;
+
+        System.out.println(
+                "[AI Learning] Failed craft of "
+                        + previousActionTarget
+        );
+    }
+
+    /*
+     * Recreate the experience with the corrected
+     * recipe-specific reward.
+     */
+    experience =
+            new AgentExperience(
+                    previousState,
+                    previousAction,
+                    currentState,
+                    reward,
+                    previousActionTarget
+            );
+}
+
+    memory.add(
+            experience
+    );
+
+    System.out.println(
+            "[AI Agent] Result: "
+                    + previousAction
+                    + " reward="
+                    + reward
+    );
+
+    if (previousActionTarget != null) {
+
+        System.out.println(
+                "[AI Agent] Action target: "
+                        + previousActionTarget
+                        + " acquired="
+                        + experience.targetWasAcquired()
+        );
+    }
+}
+        
+
+
+        // -----------------------------------------------------
+        // Choose next action
+        // -----------------------------------------------------
+
+        AgentAction nextAction =
+                chooseAction(
+                        currentState,
+                        currentGoal
+                );
+
+        System.out.println(
+                "[AI Agent] Chose: "
+                        + nextAction
+        );
+
+
+        // -----------------------------------------------------
+        // Execute action
+        // -----------------------------------------------------
+
+        ActionExecutor.execute(
+                minecraft,
+                nextAction
+        );
+
+
+        // -----------------------------------------------------
+        // Remember state/action pair
+        // -----------------------------------------------------
+
+        previousState =
+        currentState;
+
+previousAction =
+        nextAction;
+
+/*
+ * Remember what a CRAFT action was trying
+ * to produce so the resulting experience
+ * can be associated with that item.
+ */
+if (nextAction == AgentAction.CRAFT) {
+
+    previousActionTarget =
+            CraftingExecutor.getLastCraftTarget();
+
+} else {
+
+    previousActionTarget =
+            null;
+}
+
+lastDecisionTime =
+        now;
+    }
+
+
+    // =========================================================
+    // ACTION SELECTION
+    // =========================================================
+
+    private AgentAction chooseAction(
+            GameState state,
+            AgentGoal goal
+    ) {
+
+        /*
+         * BOOTSTRAP POLICY
+         *
+         * We give the agent enough initial behavior
+         * to generate experiences without encoding
+         * the complete Minecraft solution.
+         */
+
+
+        // -----------------------------------------------------
+        // ACQUIRE WOOD
+        // -----------------------------------------------------
+
+        if (goal == AgentGoal.ACQUIRE_WOOD) {
+
+            System.out.println(
+                    "[AI Agent] Need wood - "
+                            + "searching for a tree."
+            );
+
+            return AgentAction.MOVE_TO_RESOURCE;
+        }
+
+
+        // -----------------------------------------------------
+        // DEVELOP TOOLS
+        // -----------------------------------------------------
+
+        if (goal == AgentGoal.DEVELOP_TOOLS) {
+
+    /*
+     * If Minecraft says there are currently
+     * craftable recipes, try crafting.
+     */
+    if (!CraftingExecutor
+            .getCraftableRecipes(
+                    Minecraft.getInstance()
+            )
+            .isEmpty()) {
+
+        System.out.println(
+                "[AI Agent] Crafting options available."
+        );
+
+        return AgentAction.CRAFT;
+    }
+
+    /*
+     * If nothing can currently be crafted,
+     * ask ActionEvaluator what previous
+     * experience suggests doing.
+     */
+    AgentAction learnedAction =
+            ActionEvaluator.chooseBestAction(
+                    goal,
+                    state,
+                    memory
+            );
+
+    if (learnedAction != null) {
+
+        System.out.println(
+                "[AI Agent] Evaluator selected: "
+                        + learnedAction
+        );
+
+        return learnedAction;
+    }
+
+    /*
+     * No useful experience yet.
+     */
+    System.out.println(
+            "[AI Agent] No useful learned action "
+                    + "for DEVELOP_TOOLS - exploring."
+    );
+
+    return AgentAction.EXPLORE;
+        }
+
+
+        // -----------------------------------------------------
+        // OTHER GOALS
+        // -----------------------------------------------------
+
+        /*
+         * Later these goals will receive their own
+         * action spaces.
+         */
+
+        AgentAction learnedAction =
+                findBestLearnedAction(
+                        state
+                );
+
+        if (learnedAction != null) {
+
+            System.out.println(
+                    "[AI Agent] Using learned action: "
+                            + learnedAction
+            );
+
+            return learnedAction;
+        }
+
+        return AgentAction.WAIT;
+    }
+
+
+    // =========================================================
+    // SIMPLE LEARNED ACTION LOOKUP
+    // =========================================================
+
+    private AgentAction findBestLearnedAction(
+            GameState currentState
+    ) {
+
+        AgentAction bestAction =
+                null;
+
+        double bestReward =
+                0.0;
+
+        for (AgentExperience experience
+                : memory.getExperiences()) {
+
+            /*
+             * For this first learning version,
+             * choose the action associated with the
+             * highest positive reward.
+             *
+             * We will later make this state-specific
+             * and goal-specific.
+             */
+
+            if (experience.getReward()
+                    > bestReward) {
+
+                bestReward =
+                        experience.getReward();
+
+                bestAction =
+                        experience.getAction();
+            }
+        }
+
+        if (bestAction != null) {
+
+            System.out.println(
+                    "[AI Agent] Best learned reward: "
+                            + bestReward
+                            + " from "
+                            + bestAction
+            );
+        }
+
+        return bestAction;
+    }
+
+
+    // =========================================================
+    // ACCESSORS
+    // =========================================================
+
+    public ExperienceMemory getMemory() {
+        return memory;
+    }
+
+    public boolean isRunning() {
+        return running;
+    }
+}
