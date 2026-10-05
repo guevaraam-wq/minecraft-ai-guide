@@ -7,6 +7,7 @@ import net.minecraft.client.gui.screens.recipebook.RecipeCollection;
 import net.minecraft.world.entity.player.StackedItemContents;
 
 import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.inventory.InventoryMenu;
 
 import net.minecraft.world.item.ItemStack;
@@ -18,7 +19,6 @@ import net.minecraft.world.item.crafting.display.ShapelessCraftingRecipeDisplay;
 
 import java.util.ArrayList;
 import java.util.List;
-
 
 
 public class CraftingExecutor {
@@ -38,6 +38,7 @@ public class CraftingExecutor {
 
     private static boolean waitingForResult =
             false;
+
     private static String lastCraftTarget =
             null;
 
@@ -46,6 +47,7 @@ public class CraftingExecutor {
 
     private static final long RESULT_DELAY_MS =
             250;
+
 
     /*
      * Prevent the agent from waiting forever if
@@ -73,8 +75,10 @@ public class CraftingExecutor {
             return recipes;
         }
 
+
         ClientRecipeBook recipeBook =
                 minecraft.player.getRecipeBook();
+
 
         for (RecipeCollection collection
                 : recipeBook.getCollections()) {
@@ -83,6 +87,7 @@ public class CraftingExecutor {
                     collection.getRecipes()
             );
         }
+
 
         return recipes;
     }
@@ -99,9 +104,11 @@ public class CraftingExecutor {
         StackedItemContents contents =
                 new StackedItemContents();
 
+
         if (minecraft.player == null) {
             return contents;
         }
+
 
         for (
                 int i = 0;
@@ -116,6 +123,7 @@ public class CraftingExecutor {
                             .getInventory()
                             .getItem(i);
 
+
             if (!stack.isEmpty()) {
 
                 contents.accountStack(
@@ -124,12 +132,13 @@ public class CraftingExecutor {
             }
         }
 
+
         return contents;
     }
 
 
     // =========================================================
-    // NORMAL CRAFTING GRID RECIPE CHECK
+    // CRAFTING GRID RECIPE CHECK
     // =========================================================
 
     /*
@@ -140,116 +149,154 @@ public class CraftingExecutor {
      * - smithing
      * - stonecutter
      *
-     * Container 0 is the player's crafting menu, so only
-     * shaped and shapeless crafting recipes are valid here.
+     * We only want shaped and shapeless crafting recipes.
+     *
+     * The available crafting-grid size depends on the
+     * player's currently open menu:
+     *
+     * Inventory crafting = 2x2
+     * Crafting table     = 3x3
      */
 
     private static boolean isCraftingGridRecipe(
-        RecipeDisplayEntry entry
-) {
+            Minecraft minecraft,
+            RecipeDisplayEntry entry
+    ) {
 
-    RecipeDisplay display =
-            entry.display();
+        RecipeDisplay display =
+                entry.display();
 
-
-    // ---------------------------------------------------------
-    // SHAPED RECIPES
-    // ---------------------------------------------------------
-
-    if (display
-            instanceof ShapedCraftingRecipeDisplay shaped) {
 
         /*
-         * The player's normal inventory crafting
-         * grid is only 2x2.
-         *
-         * Recipes larger than that require a
-         * crafting table and should not be attempted
-         * in container 0.
+         * If CraftingMenu is currently open,
+         * Minecraft has given the player access
+         * to a crafting table's 3x3 grid.
          */
-        boolean fitsInventoryGrid =
-                shaped.width() <= 2
-                        && shaped.height() <= 2;
+        boolean usingCraftingTable =
+                minecraft.player != null
+                        && minecraft.player.containerMenu
+                        instanceof CraftingMenu;
 
-        if (!fitsInventoryGrid) {
 
-            System.out.println(
-                    "[AI Crafting] Recipe requires "
-                            + shaped.width()
-                            + "x"
-                            + shaped.height()
-                            + " grid - skipping for now."
-            );
+        int gridWidth =
+                usingCraftingTable
+                        ? 3
+                        : 2;
+
+        int gridHeight =
+                usingCraftingTable
+                        ? 3
+                        : 2;
+
+        int gridSlots =
+                gridWidth * gridHeight;
+
+
+        // -----------------------------------------------------
+        // SHAPED RECIPES
+        // -----------------------------------------------------
+
+        if (display
+                instanceof ShapedCraftingRecipeDisplay shaped) {
+
+            boolean fitsGrid =
+                    shaped.width() <= gridWidth
+                            && shaped.height() <= gridHeight;
+
+
+            if (!fitsGrid) {
+
+                System.out.println(
+                        "[AI Crafting] Recipe requires "
+                                + shaped.width()
+                                + "x"
+                                + shaped.height()
+                                + " grid - current grid is "
+                                + gridWidth
+                                + "x"
+                                + gridHeight
+                                + "."
+                );
+            }
+
+
+            return fitsGrid;
         }
 
-        return fitsInventoryGrid;
+
+        // -----------------------------------------------------
+        // SHAPELESS RECIPES
+        // -----------------------------------------------------
+
+        if (display
+                instanceof ShapelessCraftingRecipeDisplay shapeless) {
+
+            int ingredientCount =
+                    shapeless.ingredients().size();
+
+
+            boolean fitsGrid =
+                    ingredientCount <= gridSlots;
+
+
+            if (!fitsGrid) {
+
+                System.out.println(
+                        "[AI Crafting] Shapeless recipe requires "
+                                + ingredientCount
+                                + " ingredients - current grid has "
+                                + gridSlots
+                                + " slots."
+                );
+            }
+
+
+            return fitsGrid;
+        }
+
+
+        /*
+         * Furnace, smithing, stonecutting, etc.
+         * are still excluded.
+         */
+        return false;
     }
 
 
-    // ---------------------------------------------------------
-    // SHAPELESS RECIPES
-    // ---------------------------------------------------------
+    // =========================================================
+    // REQUIRES CRAFTING TABLE
+    // =========================================================
 
-    if (display
-            instanceof ShapelessCraftingRecipeDisplay shapeless) {
-
-        /*
-         * A 2x2 crafting grid contains four slots.
-         */
-        int ingredientCount =
-                shapeless.ingredients().size();
-
-        boolean fitsInventoryGrid =
-                ingredientCount <= 4;
-
-        if (!fitsInventoryGrid) {
-
-            System.out.println(
-                    "[AI Crafting] Shapeless recipe requires "
-                            + ingredientCount
-                            + " ingredients - skipping for now."
-            );
-        }
-
-        return fitsInventoryGrid;
-    }
-
-
-    /*
-     * Furnace, smithing, stonecutting, etc.
-     * cannot be performed in this crafting menu.
-     */
-    return false;
-}
     private static boolean requiresCraftingTable(
-        RecipeDisplayEntry entry
-) {
+            RecipeDisplayEntry entry
+    ) {
 
-    RecipeDisplay display =
-            entry.display();
+        RecipeDisplay display =
+                entry.display();
 
 
-    // Shaped recipe larger than 2x2.
-    if (display
-            instanceof ShapedCraftingRecipeDisplay shaped) {
+        // Shaped recipe larger than 2x2.
+        if (display
+                instanceof ShapedCraftingRecipeDisplay shaped) {
 
-        return shaped.width() > 2
-                || shaped.height() > 2;
+            return shaped.width() > 2
+                    || shaped.height() > 2;
+        }
+
+
+        // Shapeless recipe needing more than four slots.
+        if (display
+                instanceof ShapelessCraftingRecipeDisplay shapeless) {
+
+            return shapeless
+                    .ingredients()
+                    .size() > 4;
+        }
+
+
+        return false;
     }
 
-
-    // Shapeless recipe needing more than four slots.
-    if (display
-            instanceof ShapelessCraftingRecipeDisplay shapeless) {
-
-        return shapeless
-                .ingredients()
-                .size() > 4;
-    }
-
-
-    return false;
-}
 
     // =========================================================
     // CRAFTABLE RECIPES
@@ -262,29 +309,39 @@ public class CraftingExecutor {
         List<RecipeDisplayEntry> craftable =
                 new ArrayList<>();
 
+
         if (minecraft.player == null) {
             return craftable;
         }
+
 
         StackedItemContents contents =
                 getInventoryContents(
                         minecraft
                 );
 
+
         for (RecipeDisplayEntry recipe
                 : getKnownRecipes(minecraft)) {
 
             /*
-             * CRITICAL:
+             * Only allow recipes that fit the
+             * currently available crafting grid.
              *
-             * Never send furnace, smithing or
-             * stonecutter recipes to the normal
-             * crafting menu.
+             * Inventory menu:
+             * 2x2
+             *
+             * Crafting table menu:
+             * 3x3
              */
-            if (!isCraftingGridRecipe(recipe)) {
+            if (!isCraftingGridRecipe(
+                    minecraft,
+                    recipe
+            )) {
 
                 continue;
             }
+
 
             /*
              * Check whether the player currently
@@ -298,65 +355,98 @@ public class CraftingExecutor {
             }
         }
 
+
         return craftable;
     }
+
+
+    // =========================================================
+    // RECIPES BLOCKED BY CRAFTING TABLE
+    // =========================================================
+
     public static List<RecipeDisplayEntry>
-getRecipesBlockedByCraftingTable(
-        Minecraft minecraft
-) {
+    getRecipesBlockedByCraftingTable(
+            Minecraft minecraft
+    ) {
 
-    List<RecipeDisplayEntry> blocked =
-            new ArrayList<>();
+        List<RecipeDisplayEntry> blocked =
+                new ArrayList<>();
 
 
-    if (minecraft.player == null) {
+        if (minecraft.player == null) {
+            return blocked;
+        }
+
+
+        /*
+         * If the crafting table is already open,
+         * these recipes are no longer blocked.
+         */
+        if (minecraft.player.containerMenu
+                instanceof CraftingMenu) {
+
+            return blocked;
+        }
+
+
+        StackedItemContents contents =
+                getInventoryContents(
+                        minecraft
+                );
+
+
+        for (RecipeDisplayEntry recipe
+                : getKnownRecipes(minecraft)) {
+
+            /*
+             * We're specifically looking for recipes
+             * whose ingredients the player possesses,
+             * but which cannot fit in the inventory's
+             * 2x2 crafting grid.
+             */
+            if (!requiresCraftingTable(
+                    recipe
+            )) {
+
+                continue;
+            }
+
+
+            if (recipe.canCraft(contents)) {
+
+                blocked.add(
+                        recipe
+                );
+            }
+        }
+
+
         return blocked;
     }
 
 
-    StackedItemContents contents =
-            getInventoryContents(
-                    minecraft
-            );
+    public static boolean needsCraftingTable(
+            Minecraft minecraft
+    ) {
 
-
-    for (RecipeDisplayEntry recipe
-            : getKnownRecipes(minecraft)) {
-
-
-        /*
-         * We're specifically looking for recipes
-         * whose ingredients the player possesses,
-         * but which cannot fit in the inventory's
-         * 2x2 crafting grid.
-         */
-        if (!requiresCraftingTable(
-                recipe
-        )) {
-
-            continue;
-        }
-
-
-        if (recipe.canCraft(contents)) {
-
-            blocked.add(
-                    recipe
-            );
-        }
+        return !getRecipesBlockedByCraftingTable(
+                minecraft
+        ).isEmpty();
     }
 
 
-    return blocked;
-}
-public static boolean needsCraftingTable(
-        Minecraft minecraft
-) {
+    // =========================================================
+    // CRAFTING TABLE STATE
+    // =========================================================
 
-    return !getRecipesBlockedByCraftingTable(
-            minecraft
-    ).isEmpty();
-}
+    public static boolean isUsingCraftingTable(
+            Minecraft minecraft
+    ) {
+
+        return minecraft.player != null
+                && minecraft.player.containerMenu
+                instanceof CraftingMenu;
+    }
 
 
     // =========================================================
@@ -364,93 +454,105 @@ public static boolean needsCraftingTable(
     // =========================================================
 
     public static RecipeDisplayEntry chooseCraftableRecipe(
-        Minecraft minecraft
-) {
+            Minecraft minecraft
+    ) {
 
-    List<RecipeDisplayEntry> craftable =
-            getCraftableRecipes(
-                    minecraft
+        List<RecipeDisplayEntry> craftable =
+                getCraftableRecipes(
+                        minecraft
+                );
+
+
+        if (craftable.isEmpty()) {
+
+            System.out.println(
+                    "[AI Crafting] No crafting-grid "
+                            + "recipes currently available."
             );
 
-    if (craftable.isEmpty()) {
+            return null;
+        }
+
+
+        /*
+         * Determine the agent's current goal so recipe
+         * evaluation can consider what the agent is
+         * currently trying to accomplish.
+         */
+        GameState currentState =
+                GameState.observe(
+                        minecraft
+                );
+
+
+        AgentGoalManager goalManager =
+                new AgentGoalManager();
+
+
+        AgentGoal currentGoal =
+                goalManager.evaluate(
+                        currentState
+                );
+
+
+        /*
+         * RecipeEvaluator replaces the previous random
+         * recipe selection.
+         */
+        RecipeDisplayEntry selected =
+                RecipeEvaluator.chooseRecipe(
+                        minecraft,
+                        craftable,
+                        currentGoal
+                );
+
+
+        if (selected == null) {
+
+            System.out.println(
+                    "[AI Crafting] Recipe evaluator "
+                            + "could not select a recipe."
+            );
+
+            return null;
+        }
+
 
         System.out.println(
-                "[AI Crafting] No crafting-grid "
-                        + "recipes currently available."
+                "[AI Crafting] Crafting-grid choices: "
+                        + craftable.size()
         );
 
-        return null;
-    }
-
-    /*
-     * Determine the agent's current goal so recipe
-     * evaluation can consider what the agent is
-     * currently trying to accomplish.
-     */
-    GameState currentState =
-            GameState.observe(
-                    minecraft
-            );
-
-    AgentGoalManager goalManager =
-            new AgentGoalManager();
-
-    AgentGoal currentGoal =
-            goalManager.evaluate(
-                    currentState
-            );
-
-    /*
-     * RecipeEvaluator replaces the previous random
-     * recipe selection.
-     */
-    RecipeDisplayEntry selected =
-            RecipeEvaluator.chooseRecipe(
-                    minecraft,
-                    craftable,
-                    currentGoal
-            );
-
-    if (selected == null) {
 
         System.out.println(
-                "[AI Crafting] Recipe evaluator "
-                        + "could not select a recipe."
+                "[AI Crafting] Selected recipe: "
+                        + selected.id()
         );
 
-        return null;
+
+        lastCraftTarget =
+                RecipeEvaluator.getOutputId(
+                        minecraft,
+                        selected
+                );
+
+
+        System.out.println(
+                "[AI Crafting] Selected output: "
+                        + lastCraftTarget
+        );
+
+
+        System.out.println(
+                "[AI Crafting] Display type: "
+                        + selected.display()
+                                .getClass()
+                                .getSimpleName()
+        );
+
+
+        return selected;
     }
-
-    System.out.println(
-            "[AI Crafting] Crafting-grid choices: "
-                    + craftable.size()
-    );
-
-    System.out.println(
-            "[AI Crafting] Selected recipe: "
-                    + selected.id()
-    );
-
-    lastCraftTarget =
-        RecipeEvaluator.getOutputId(
-                minecraft,
-                selected
-        );
-
-System.out.println(
-        "[AI Crafting] Selected output: "
-                + lastCraftTarget
-);
-
-    System.out.println(
-            "[AI Crafting] Display type: "
-                    + selected.display()
-                            .getClass()
-                            .getSimpleName()
-    );
-
-    return selected;
-}
 
 
     // =========================================================
@@ -486,6 +588,7 @@ System.out.println(
                         minecraft
                 );
 
+
         if (recipe == null) {
 
             return false;
@@ -503,6 +606,25 @@ System.out.println(
                         + containerId
         );
 
+
+        if (isUsingCraftingTable(
+                minecraft
+        )) {
+
+            System.out.println(
+                    "[AI Crafting] Using 3x3 "
+                            + "crafting table."
+            );
+
+        } else {
+
+            System.out.println(
+                    "[AI Crafting] Using 2x2 "
+                            + "inventory crafting grid."
+            );
+        }
+
+
         System.out.println(
                 "[AI Crafting] Attempting recipe: "
                         + recipe.id()
@@ -511,7 +633,8 @@ System.out.println(
 
         /*
          * Ask Minecraft to place the recipe's
-         * ingredients into the crafting grid.
+         * ingredients into the currently open
+         * crafting grid.
          */
         minecraft.gameMode.handlePlaceRecipe(
                 containerId,
@@ -523,9 +646,11 @@ System.out.println(
         waitingForResult =
                 true;
 
+
         resultReadyTime =
                 System.currentTimeMillis()
                         + RESULT_DELAY_MS;
+
 
         craftingTimeoutTime =
                 System.currentTimeMillis()
@@ -599,6 +724,10 @@ System.out.println(
                         .containerId;
 
 
+        /*
+         * Both InventoryMenu and CraftingMenu use
+         * result slot 0.
+         */
         int resultSlot =
                 InventoryMenu.RESULT_SLOT;
 
@@ -663,7 +792,10 @@ System.out.println(
 
         return waitingForResult;
     }
+
+
     public static String getLastCraftTarget() {
+
         return lastCraftTarget;
     }
 
@@ -694,6 +826,7 @@ System.out.println(
                         minecraft
                 );
 
+
         List<RecipeDisplayEntry> craftable =
                 getCraftableRecipes(
                         minecraft
@@ -705,6 +838,7 @@ System.out.println(
                         + known.size()
         );
 
+
         System.out.println(
                 "[AI Crafting] Crafting-grid recipes "
                         + "currently craftable: "
@@ -712,8 +846,25 @@ System.out.println(
         );
 
 
+        if (isUsingCraftingTable(
+                minecraft
+        )) {
+
+            System.out.println(
+                    "[AI Crafting] Active grid: 3x3"
+            );
+
+        } else {
+
+            System.out.println(
+                    "[AI Crafting] Active grid: 2x2"
+            );
+        }
+
+
         int shown =
                 0;
+
 
         for (RecipeDisplayEntry recipe
                 : craftable) {
@@ -728,7 +879,9 @@ System.out.println(
                             + "]"
             );
 
+
             shown++;
+
 
             if (shown >= 20) {
                 break;

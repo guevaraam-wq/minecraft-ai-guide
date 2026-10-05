@@ -1,6 +1,7 @@
 package minecraft_ai_guide.agent;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.item.ItemStack;
 
@@ -15,20 +16,32 @@ public class GameState {
     private final double y;
     private final double z;
 
+    /*
+     * World-state information.
+     *
+     * This lets the learner distinguish between
+     * losing a crafting table and successfully
+     * placing one in the world.
+     */
+    private final boolean craftingTableNearby;
+
 
     public GameState(
             Map<String, Integer> inventory,
             double x,
             double y,
-            double z
+            double z,
+            boolean craftingTableNearby
     ) {
 
-        this.inventory =
-                inventory;
+        this.inventory = inventory;
 
         this.x = x;
         this.y = y;
         this.z = z;
+
+        this.craftingTableNearby =
+                craftingTableNearby;
     }
 
 
@@ -44,30 +57,33 @@ public class GameState {
                 new HashMap<>();
 
 
-        if (minecraft.player == null) {
+        if (minecraft.player == null
+                || minecraft.level == null) {
 
             return new GameState(
                     inventory,
                     0,
                     0,
-                    0
+                    0,
+                    false
             );
         }
 
 
-        for (
-                int i = 0;
-                i < minecraft.player
-                        .getInventory()
-                        .getContainerSize();
-                i++
-        ) {
+        // -----------------------------------------------------
+        // INVENTORY
+        // -----------------------------------------------------
+
+        for (int i = 0;
+             i < minecraft.player
+                     .getInventory()
+                     .getContainerSize();
+             i++) {
 
             ItemStack stack =
                     minecraft.player
                             .getInventory()
                             .getItem(i);
-
 
             if (stack.isEmpty()) {
                 continue;
@@ -90,17 +106,88 @@ public class GameState {
         }
 
 
+        // -----------------------------------------------------
+        // NEARBY WORLD
+        // -----------------------------------------------------
+
+        boolean craftingTableNearby =
+                findNearbyCraftingTable(
+                        minecraft
+                );
+
+
         return new GameState(
                 inventory,
                 minecraft.player.getX(),
                 minecraft.player.getY(),
-                minecraft.player.getZ()
+                minecraft.player.getZ(),
+                craftingTableNearby
         );
     }
 
 
     // =========================================================
-    // INVENTORY QUERIES
+    // FIND CRAFTING TABLE
+    // =========================================================
+
+    private static boolean findNearbyCraftingTable(
+            Minecraft minecraft
+    ) {
+
+        BlockPos center =
+                minecraft.player
+                        .blockPosition();
+
+
+        /*
+         * Search a small cube around the player.
+         *
+         * This is intentionally local because the
+         * agent only needs to know whether it has
+         * created a usable crafting environment
+         * nearby.
+         */
+        for (int x = -4; x <= 4; x++) {
+
+            for (int y = -2; y <= 2; y++) {
+
+                for (int z = -4; z <= 4; z++) {
+
+                    BlockPos pos =
+                            center.offset(
+                                    x,
+                                    y,
+                                    z
+                            );
+
+
+                    String blockId =
+                            BuiltInRegistries.BLOCK
+                                    .getKey(
+                                            minecraft.level
+                                                    .getBlockState(pos)
+                                                    .getBlock()
+                                    )
+                                    .toString();
+
+
+                    if (blockId.equals(
+                            "minecraft:crafting_table"
+                    )) {
+
+                        return true;
+                    }
+                }
+            }
+        }
+
+
+        return false;
+    }
+
+
+    // =========================================================
+    // GETTERS
     // =========================================================
 
     public Map<String, Integer> getInventory() {
@@ -110,57 +197,6 @@ public class GameState {
         );
     }
 
-
-    public int getItemCount(
-            String itemId
-    ) {
-
-        return inventory.getOrDefault(
-                itemId,
-                0
-        );
-    }
-
-
-    public boolean hasItem(
-            String itemId
-    ) {
-
-        return getItemCount(
-                itemId
-        ) > 0;
-    }
-
-
-    public int countItemsContaining(
-            String text
-    ) {
-
-        int total = 0;
-
-
-        for (
-                Map.Entry<String, Integer> entry
-                        : inventory.entrySet()
-        ) {
-
-            if (entry
-                    .getKey()
-                    .contains(text)) {
-
-                total +=
-                        entry.getValue();
-            }
-        }
-
-
-        return total;
-    }
-
-
-    // =========================================================
-    // POSITION
-    // =========================================================
 
     public double getX() {
         return x;
@@ -177,22 +213,72 @@ public class GameState {
     }
 
 
+    public boolean isCraftingTableNearby() {
+
+        return craftingTableNearby;
+    }
     // =========================================================
-    // DEBUG
+// INVENTORY HELPERS
+// =========================================================
+
+/*
+ * Check whether the player currently possesses
+ * at least one of a specific Minecraft item.
+ */
+public boolean hasItem(
+        String itemId
+) {
+
+    return inventory.getOrDefault(
+            itemId,
+            0
+    ) > 0;
+}
+
+
+/*
+ * Count all inventory items whose Minecraft ID
+ * contains the supplied text.
+ *
+ * Examples:
+ *
+ * "_log"    -> oak_log, birch_log, etc.
+ * "_planks" -> oak_planks, spruce_planks, etc.
+ */
+public int countItemsContaining(
+        String text
+) {
+
+    int total = 0;
+
+    for (Map.Entry<String, Integer> entry
+            : inventory.entrySet()) {
+
+        if (entry.getKey().contains(text)) {
+
+            total += entry.getValue();
+        }
+    }
+
+    return total;
+}
+
+
+    // =========================================================
+    // STRING
     // =========================================================
 
     @Override
     public String toString() {
 
         return "GameState{" +
-                "inventory=" +
-                inventory +
+                "inventory=" + inventory +
                 ", position=(" +
-                x +
-                ", " +
-                y +
-                ", " +
-                z +
-                ")}";
+                x + ", " +
+                y + ", " +
+                z + ")" +
+                ", craftingTableNearby=" +
+                craftingTableNearby +
+                "}";
     }
 }

@@ -12,11 +12,7 @@ public class RewardSystem {
     ) {
 
         /*
-         * Small time/action penalty.
-         *
-         * An action should accomplish something
-         * useful rather than being rewarded simply
-         * for existing.
+         * Small cost for every action.
          */
         double reward = -0.01;
 
@@ -28,14 +24,10 @@ public class RewardSystem {
                 after.getInventory();
 
 
-        // -----------------------------------------------------
+        // =====================================================
         // INVENTORY CHANGES
-        // -----------------------------------------------------
+        // =====================================================
 
-        /*
-         * Look at every item that existed either
-         * before or after the action.
-         */
         Set<String> itemIds =
                 new HashSet<>();
 
@@ -51,7 +43,7 @@ public class RewardSystem {
         int totalItemsGained = 0;
         int totalItemsLost = 0;
 
-        boolean discoveredNewItem = false;
+        int newItemTypes = 0;
 
 
         for (String itemId : itemIds) {
@@ -69,84 +61,254 @@ public class RewardSystem {
                     );
 
 
+            // -------------------------------------------------
+            // ITEMS GAINED
+            // -------------------------------------------------
+
             if (afterCount > beforeCount) {
 
                 int gained =
-                        afterCount
-                                - beforeCount;
+                        afterCount - beforeCount;
 
                 totalItemsGained += gained;
 
 
                 /*
-                 * New item types are useful
-                 * experiences because the agent has
-                 * discovered a new state.
+                 * Discovering a completely new item type
+                 * represents exploration/progression.
                  */
                 if (beforeCount == 0) {
 
-                    discoveredNewItem =
-                            true;
+                    newItemTypes++;
+                }
+
+
+                /*
+                 * Repeatedly producing large quantities of
+                 * something already owned should not dominate
+                 * the learning signal.
+                 */
+                if (beforeCount > 0) {
+
+                    reward -=
+                            Math.min(
+                                    gained,
+                                    8
+                            ) * 0.01;
                 }
             }
 
 
+            // -------------------------------------------------
+            // ITEMS LOST
+            // -------------------------------------------------
+
             if (afterCount < beforeCount) {
 
                 totalItemsLost +=
-                        beforeCount
-                                - afterCount;
+                        beforeCount - afterCount;
             }
         }
 
 
+        // =====================================================
+        // GENERAL ACQUISITION REWARD
+        // =====================================================
+
         /*
-         * Reward actual acquisition.
+         * Acquiring something is useful, but this is
+         * deliberately much smaller than before.
          *
-         * This works for:
-         *
-         * - collecting blocks
-         * - crafting outputs
-         * - obtaining drops
-         *
-         * without needing to know which Minecraft
-         * items are "supposed" to be valuable.
+         * Crafting any random item should not immediately
+         * produce a huge reward.
          */
         if (totalItemsGained > 0) {
 
-            reward += 0.25;
+            reward += 0.08;
         }
 
 
         /*
-         * Give a small exploration bonus when the
-         * agent obtains an item type it did not
-         * previously possess.
+         * New item TYPES are more interesting than simply
+         * producing more copies of an existing item.
          */
-        if (discoveredNewItem) {
+        if (newItemTypes > 0) {
 
-            reward += 0.25;
+            reward +=
+                    Math.min(
+                            newItemTypes,
+                            3
+                    ) * 0.12;
         }
 
 
+        // =====================================================
+        // PROGRESSION MILESTONES
+        // =====================================================
+
         /*
-         * Inventory rearrangement should NOT
-         * automatically count as success.
+         * These are broad capability milestones rather than
+         * a complete hard-coded Minecraft playthrough.
          *
-         * If items disappear but nothing new is
-         * gained, this may simply be ingredients
-         * being moved into a crafting grid.
+         * They tell the learner that reaching a new capability
+         * is more useful than endlessly crafting arbitrary
+         * objects.
+         */
+
+
+        // -----------------------------------------------------
+        // WOOD -> PLANKS
+        // -----------------------------------------------------
+
+        boolean hadPlanks =
+                containsMatching(
+                        beforeInventory,
+                        "_planks"
+                );
+
+        boolean hasPlanks =
+                containsMatching(
+                        afterInventory,
+                        "_planks"
+                );
+
+        if (!hadPlanks && hasPlanks) {
+
+            reward += 0.40;
+
+            System.out.println(
+                    "[AI Reward] Progress milestone: "
+                            + "obtained planks."
+            );
+        }
+
+
+        // -----------------------------------------------------
+        // CRAFTING TABLE
+        // -----------------------------------------------------
+
+        boolean hadCraftingTable =
+                hasItem(
+                        beforeInventory,
+                        "minecraft:crafting_table"
+                );
+
+        boolean hasCraftingTable =
+                hasItem(
+                        afterInventory,
+                        "minecraft:crafting_table"
+                );
+
+        if (!hadCraftingTable
+                && hasCraftingTable) {
+
+            reward += 0.75;
+
+            System.out.println(
+                    "[AI Reward] Progress milestone: "
+                            + "obtained crafting table."
+            );
+        }
+
+
+        // -----------------------------------------------------
+        // STICKS
+        // -----------------------------------------------------
+
+        boolean hadSticks =
+                hasItem(
+                        beforeInventory,
+                        "minecraft:stick"
+                );
+
+        boolean hasSticks =
+                hasItem(
+                        afterInventory,
+                        "minecraft:stick"
+                );
+
+        if (!hadSticks && hasSticks) {
+
+            reward += 0.25;
+
+            System.out.println(
+                    "[AI Reward] Progress milestone: "
+                            + "obtained sticks."
+            );
+        }
+
+
+        // -----------------------------------------------------
+        // TOOLS
+        // -----------------------------------------------------
+
+        boolean hadTool =
+                containsTool(
+                        beforeInventory
+                );
+
+        boolean hasTool =
+                containsTool(
+                        afterInventory
+                );
+
+        if (!hadTool && hasTool) {
+
+            reward += 1.0;
+
+            System.out.println(
+                    "[AI Reward] Major progress milestone: "
+                            + "obtained first tool."
+            );
+        }
+
+
+        // =====================================================
+        // ITEM LOSS
+        // =====================================================
+
+        /*
+         * Losing items without gaining anything may mean:
+         *
+         * - ingredients were moved
+         * - an item was dropped
+         * - a block was placed
+         *
+         * Therefore this penalty stays small.
+         *
+         * Placement will eventually get its own world-state
+         * reward rather than being judged only by inventory.
          */
         if (totalItemsLost > 0
                 && totalItemsGained == 0) {
 
-            reward -= 0.10;
+            reward -= 0.02;
         }
 
+        // =====================================================
+// WORLD PROGRESSION
+// =====================================================
 
-        // -----------------------------------------------------
+/*
+ * Reward the transition from having no nearby
+ * crafting table to successfully establishing one.
+ *
+ * This gives PLACE_BLOCK credit for unlocking a
+ * new crafting capability.
+ */
+if (!before.isCraftingTableNearby()
+        && after.isCraftingTableNearby()) {
+
+    reward += 1.25;
+
+    System.out.println(
+            "[AI Reward] Major progress milestone: "
+                    + "established crafting environment."
+    );
+}
+        // =====================================================
         // MOVEMENT
-        // -----------------------------------------------------
+        // =====================================================
 
         double movement =
                 Math.abs(
@@ -164,10 +326,9 @@ public class RewardSystem {
 
 
         /*
-         * Movement gets only a tiny reward.
-         *
-         * Otherwise wandering can become more
-         * attractive than making real progress.
+         * Movement matters because exploration and resource
+         * collection require it, but wandering should not
+         * overpower progression.
          */
         if (movement > 1.0) {
 
@@ -179,8 +340,78 @@ public class RewardSystem {
     }
 
 
-    private RewardSystem() {
+    // =========================================================
+    // EXACT ITEM CHECK
+    // =========================================================
 
+    private static boolean hasItem(
+            Map<String, Integer> inventory,
+            String itemId
+    ) {
+
+        return inventory.getOrDefault(
+                itemId,
+                0
+        ) > 0;
+    }
+
+
+    // =========================================================
+    // PARTIAL ITEM-ID CHECK
+    // =========================================================
+
+    private static boolean containsMatching(
+            Map<String, Integer> inventory,
+            String text
+    ) {
+
+        for (Map.Entry<String, Integer> entry
+                : inventory.entrySet()) {
+
+            if (entry.getValue() > 0
+                    && entry.getKey()
+                    .contains(text)) {
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+
+    // =========================================================
+    // TOOL CHECK
+    // =========================================================
+
+    private static boolean containsTool(
+            Map<String, Integer> inventory
+    ) {
+
+        for (Map.Entry<String, Integer> entry
+                : inventory.entrySet()) {
+
+            if (entry.getValue() <= 0) {
+                continue;
+            }
+
+            String id =
+                    entry.getKey();
+
+            if (id.endsWith("_pickaxe")
+                    || id.endsWith("_axe")
+                    || id.endsWith("_shovel")
+                    || id.endsWith("_hoe")) {
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+
+    private RewardSystem() {
         // Utility class.
     }
 }

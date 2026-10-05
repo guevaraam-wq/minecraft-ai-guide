@@ -20,6 +20,9 @@ public class MinecraftAgent {
     private long lastDecisionTime = 0;
 
     private static final long DECISION_INTERVAL = 1000;
+    private int decisionCount = 0;
+
+private static final int MAX_DECISIONS = 30;
 
 
     // =========================================================
@@ -33,6 +36,7 @@ public class MinecraftAgent {
         }
 
         running = true;
+        decisionCount = 0;
 
         previousState =
                 GameState.observe(minecraft);
@@ -221,7 +225,20 @@ if (previousAction == AgentAction.CRAFT
         // -----------------------------------------------------
         // Choose next action
         // -----------------------------------------------------
+        decisionCount++;
 
+if (decisionCount > MAX_DECISIONS) {
+
+    System.out.println(
+            "[AI Agent] Training session complete - "
+                    + "automatic safety stop."
+    );
+
+    stop();
+    ActionExecutor.stopMovement(minecraft);
+
+    return;
+}
         AgentAction nextAction =
                 chooseAction(
                         currentState,
@@ -318,6 +335,113 @@ lastDecisionTime =
      * If Minecraft says there are currently
      * craftable recipes, try crafting.
      */
+    /*
+ * Check whether the agent has discovered recipes
+ * that it has materials for, but cannot execute
+ * because they require a 3x3 crafting grid.
+ */
+/*
+ * Check whether useful recipes are blocked because
+ * they require a 3x3 crafting environment.
+ */
+if (CraftingExecutor.needsCraftingTable(
+        Minecraft.getInstance()
+)) {
+
+    System.out.println(
+            "[AI Agent] Discovered blocked recipes: "
+                    + "3x3 crafting environment required."
+    );
+
+
+    // =====================================================
+    // TABLE ALREADY PLACED
+    // =====================================================
+
+    /*
+     * A nearby crafting table means the prerequisite
+     * has already been satisfied.
+     *
+     * Do NOT craft or place another table.
+     */
+    if (state.isCraftingTableNearby()) {
+
+        System.out.println(
+                "[AI Agent] Nearby crafting table detected."
+        );
+
+        System.out.println(
+                "[AI Agent] Crafting environment already "
+                        + "established - not making another table."
+        );
+
+        /*
+         * We currently need a separate interaction step
+         * before 3x3 recipes can actually be executed.
+         *
+         * For now, allow learned behavior/exploration
+         * rather than creating duplicate tables.
+         */
+        AgentAction learnedAction =
+                ActionEvaluator.chooseBestAction(
+                        goal,
+                        state,
+                        memory
+                );
+
+        /*
+         * Do not choose PLACE_BLOCK here.
+         *
+         * The required table is already in the world.
+         */
+        if (learnedAction != null
+                && learnedAction
+                != AgentAction.PLACE_BLOCK) {
+
+            System.out.println(
+                    "[AI Agent] Crafting environment ready. "
+                            + "Evaluator selected: "
+                            + learnedAction
+            );
+
+            return learnedAction;
+        }
+
+        System.out.println(
+                "[AI Agent] Crafting environment ready - "
+                        + "exploring next capability."
+        );
+
+        return AgentAction.EXPLORE;
+    }
+
+
+    // =====================================================
+    // TABLE OWNED BUT NOT PLACED
+    // =====================================================
+
+    if (state.hasItem(
+            "minecraft:crafting_table"
+    )) {
+
+        System.out.println(
+                "[AI Agent] Crafting table in inventory "
+                        + "- trying PLACE_BLOCK."
+        );
+
+        return AgentAction.PLACE_BLOCK;
+    }
+
+
+    // =====================================================
+    // TABLE NOT YET ACQUIRED
+    // =====================================================
+
+    System.out.println(
+            "[AI Agent] Crafting table prerequisite detected "
+                    + "- need to obtain one."
+    );
+}
     if (!CraftingExecutor
             .getCraftableRecipes(
                     Minecraft.getInstance()
@@ -455,4 +579,32 @@ lastDecisionTime =
     public boolean isRunning() {
         return running;
     }
+    public AgentAction getLearnedRecommendation(
+        Minecraft minecraft
+) {
+
+    if (minecraft == null
+            || minecraft.player == null) {
+
+        return null;
+    }
+
+    GameState state =
+            GameState.observe(minecraft);
+
+    AgentGoal goal =
+            goalManager.evaluate(state);
+
+    return ActionEvaluator.chooseBestAction(
+            goal,
+            state,
+            memory
+    );
+}
+
+
+public int getExperienceCount() {
+
+    return memory.size();
+}
 }

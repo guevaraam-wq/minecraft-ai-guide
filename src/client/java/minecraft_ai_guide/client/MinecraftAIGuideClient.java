@@ -49,6 +49,25 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
     private static final MinecraftAgent AGENT =
         new MinecraftAgent();
 
+    /*
+     * TRAINING MODE:
+     *     The autonomous agent controls the player
+     *     and collects experiences.
+     *
+     * GUIDE MODE:
+     *     The player controls Minecraft while the
+     *     learned agent provides recommendations.
+     */
+    private static boolean guideMode = false;
+
+    private static minecraft_ai_guide.agent.AgentAction cachedRecommendation =
+            null;
+
+    private static long lastRecommendationUpdate = 0;
+
+    private static final long RECOMMENDATION_UPDATE_INTERVAL =
+            1000;
+
     private static long lastPathUpdate = 0;
     private static final long PATH_UPDATE_INTERVAL = 500;
 
@@ -88,14 +107,56 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
 
     while (startRecordingKey.consumeClick()) {
-        System.out.println("[Minecraft AI Guide] START AGENT KEY PRESSED");
+
+        System.out.println(
+                "[Minecraft AI Guide] TRAINING MODE"
+        );
+
+        /*
+         * Enter autonomous training mode.
+         */
+        guideMode = false;
+
+        cachedRecommendation = null;
+
         AGENT.start(client);
     }
 
     while (stopRecordingKey.consumeClick()) {
-        System.out.println("[Minecraft AI Guide] STOP AGENT KEY PRESSED");
+
+        System.out.println(
+                "[Minecraft AI Guide] GUIDE MODE"
+        );
+
+        /*
+         * Stop autonomous control immediately.
+         */
         AGENT.stop();
+
         ActionExecutor.stopMovement(client);
+
+        /*
+         * Preserve ExperienceMemory and switch to
+         * player-controlled guidance mode.
+         */
+        guideMode = true;
+
+        cachedRecommendation =
+                AGENT.getLearnedRecommendation(
+                        client
+                );
+
+        lastRecommendationUpdate =
+                System.currentTimeMillis();
+
+        System.out.println(
+                "[Minecraft AI Guide] Player control restored."
+        );
+
+        System.out.println(
+                "[Minecraft AI Guide] Learned recommendation: "
+                        + cachedRecommendation
+        );
     }
 
     AGENT.update(client);
@@ -412,5 +473,129 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
                     true
             );
         }
+        // =========================================================
+// AI LEARNING STATUS
+// =========================================================
+
+int aiStatusY =
+        requirementY + 24;
+
+
+graphics.text(
+        minecraft.font,
+        "AI Training:",
+        10,
+        aiStatusY,
+        0xFFFFFFFF,
+        true
+);
+
+
+String trainingStatus;
+
+if (AGENT.isRunning()) {
+
+    trainingStatus =
+            "TRAINING - AI controlling player";
+
+} else if (guideMode) {
+
+    trainingStatus =
+            "GUIDE - You control player";
+
+} else {
+
+    trainingStatus =
+            "STOPPED";
+}
+
+
+graphics.text(
+        minecraft.font,
+        "Status: " + trainingStatus,
+        10,
+        aiStatusY + 12,
+        0xFFFFFFFF,
+        true
+);
+
+
+graphics.text(
+        minecraft.font,
+        "Experiences learned: "
+                + AGENT.getExperienceCount(),
+        10,
+        aiStatusY + 24,
+        0xFFFFFFFF,
+        true
+);
+
+
+/*
+ * Recommendation evaluation is deliberately
+ * throttled.
+ *
+ * renderGuide() executes every rendered frame,
+ * so calling the learning system directly here
+ * would evaluate and print the policy dozens of
+ * times per second.
+ *
+ * In GUIDE MODE we refresh only once per second.
+ */
+if (guideMode) {
+
+    long now =
+            System.currentTimeMillis();
+
+    if (now - lastRecommendationUpdate
+            >= RECOMMENDATION_UPDATE_INTERVAL) {
+
+        cachedRecommendation =
+                AGENT.getLearnedRecommendation(
+                        minecraft
+                );
+
+        lastRecommendationUpdate =
+                now;
+    }
+}
+
+var learnedRecommendation =
+        cachedRecommendation;
+
+
+String recommendationText;
+
+if (learnedRecommendation != null) {
+
+    recommendationText =
+            "AI recommends: "
+                    + learnedRecommendation;
+
+} else {
+
+    recommendationText =
+            "AI recommends: Learning...";
+}
+
+
+graphics.text(
+        minecraft.font,
+        recommendationText,
+        10,
+        aiStatusY + 36,
+        0xFFFFFFFF,
+        true
+);
+
+
+graphics.text(
+        minecraft.font,
+        "R: Train AI | J: Guide Mode",
+        10,
+        aiStatusY + 52,
+        0xFFFFFFFF,
+        true
+);
     }
 }

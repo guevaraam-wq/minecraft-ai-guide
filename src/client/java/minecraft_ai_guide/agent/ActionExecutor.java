@@ -1,11 +1,17 @@
 package minecraft_ai_guide.agent;
-
+import net.minecraft.world.entity.player.Inventory;
 import minecraft_ai_guide.client.guide.Pathfinder;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.BlockTags;
-
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -91,6 +97,29 @@ public class ActionExecutor {
 
     activeAction = AgentAction.WAIT;
 }
+case PLACE_BLOCK -> {
+
+    boolean placed =
+            placeInventoryBlock(
+                    minecraft
+            );
+
+    if (placed) {
+
+        System.out.println(
+                "[AI Agent] Block placement attempted"
+        );
+
+    } else {
+
+        System.out.println(
+                "[AI Agent] No valid block placement available"
+        );
+    }
+
+    activeAction =
+            AgentAction.WAIT;
+}
 
             case WAIT -> {
                 // Do nothing.
@@ -131,26 +160,31 @@ public class ActionExecutor {
 
 
     private static void updateExploration(
-            Minecraft minecraft
-    ) {
+        Minecraft minecraft
+) {
 
-        minecraft.options.keyUp.setDown(true);
+    /*
+     * Keep exploration simple and predictable for
+     * the prototype.
+     *
+     * Previously the agent jumped every time it
+     * touched the ground, which caused continuous
+     * rabbit-like movement.
+     */
+    minecraft.options.keyUp.setDown(true);
 
-        if (minecraft.player.onGround()) {
-            minecraft.options.keyJump.setDown(true);
-        } else {
-            minecraft.options.keyJump.setDown(false);
-        }
+    minecraft.options.keyJump.setDown(false);
 
-        if (System.currentTimeMillis()
-                >= actionEndTime) {
 
-            stopMovement(minecraft);
+    if (System.currentTimeMillis()
+            >= actionEndTime) {
 
-            activeAction =
-                    AgentAction.WAIT;
-        }
+        stopMovement(minecraft);
+
+        activeAction =
+                AgentAction.WAIT;
     }
+}
 
 
     // =========================================================
@@ -666,6 +700,328 @@ public class ActionExecutor {
         // Hold Minecraft's normal attack control.
         minecraft.options.keyAttack.setDown(true);
     }
+    // =========================================================
+// BLOCK PLACEMENT
+// =========================================================
+
+private static boolean placeInventoryBlock(
+        Minecraft minecraft
+) {
+
+    if (minecraft.player == null
+            || minecraft.level == null
+            || minecraft.gameMode == null) {
+
+        return false;
+    }
+
+
+// -----------------------------------------------------
+// FIND CRAFTING TABLE ANYWHERE IN INVENTORY
+// -----------------------------------------------------
+
+int craftingTableSlot = -1;
+
+Inventory inventory =
+        minecraft.player
+                .getInventory();
+
+
+for (int i = 0;
+     i < inventory.getContainerSize();
+     i++) {
+
+    ItemStack stack =
+            inventory.getItem(i);
+
+    if (stack.isEmpty()) {
+        continue;
+    }
+
+
+    String itemId =
+            BuiltInRegistries.ITEM
+                    .getKey(
+                            stack.getItem()
+                    )
+                    .toString();
+
+
+    if (itemId.equals(
+            "minecraft:crafting_table"
+    )) {
+
+        craftingTableSlot = i;
+        break;
+    }
+}
+
+
+if (craftingTableSlot == -1) {
+
+    System.out.println(
+            "[AI Placement] Crafting table "
+                    + "not found anywhere in inventory."
+    );
+
+    return false;
+}
+
+
+System.out.println(
+        "[AI Placement] Crafting table found "
+                + "in inventory slot "
+                + craftingTableSlot
+);
+
+
+// -----------------------------------------------------
+// MOVE / SELECT CRAFTING TABLE
+// -----------------------------------------------------
+
+if (Inventory.isHotbarSlot(
+        craftingTableSlot
+)) {
+
+    /*
+     * Already in hotbar.
+     */
+    inventory.setSelectedSlot(
+            craftingTableSlot
+    );
+
+    System.out.println(
+            "[AI Placement] Crafting table already "
+                    + "in hotbar."
+    );
+
+} else {
+
+    /*
+     * Minecraft's own Inventory.pickSlot()
+     * moves the requested inventory slot into a
+     * suitable hotbar slot and selects it.
+     */
+    System.out.println(
+            "[AI Placement] Moving crafting table "
+                    + "to hotbar."
+    );
+
+    inventory.pickSlot(
+            craftingTableSlot
+    );
+}
+
+
+// -----------------------------------------------------
+// VERIFY SELECTED ITEM
+// -----------------------------------------------------
+
+ItemStack selectedStack =
+        inventory.getSelectedItem();
+
+
+if (selectedStack.isEmpty()) {
+
+    System.out.println(
+            "[AI Placement] Selected hotbar slot "
+                    + "is unexpectedly empty."
+    );
+
+    return false;
+}
+
+
+String selectedItemId =
+        BuiltInRegistries.ITEM
+                .getKey(
+                        selectedStack.getItem()
+                )
+                .toString();
+
+
+System.out.println(
+        "[AI Placement] Selected item: "
+                + selectedItemId
+);
+
+
+if (!selectedItemId.equals(
+        "minecraft:crafting_table"
+)) {
+
+    System.out.println(
+            "[AI Placement] Failed to select "
+                    + "crafting table."
+    );
+
+    return false;
+}
+
+
+    // -----------------------------------------------------
+    // FIND NEARBY GROUND
+    // -----------------------------------------------------
+
+    BlockPos playerPos =
+            minecraft.player
+                    .blockPosition();
+
+    BlockPos ground = null;
+
+
+    for (int radius = 1;
+         radius <= 3 && ground == null;
+         radius++) {
+
+        for (int x = -radius;
+             x <= radius && ground == null;
+             x++) {
+
+            for (int z = -radius;
+                 z <= radius;
+                 z++) {
+
+                if (x == 0 && z == 0) {
+                    continue;
+                }
+
+
+                BlockPos candidate =
+                        playerPos.offset(
+                                x,
+                                -1,
+                                z
+                        );
+
+                BlockPos placementPos =
+                        candidate.above();
+
+
+                /*
+                 * Ground must actually support placement.
+                 */
+                boolean groundSolid =
+                        !minecraft.level
+                                .getBlockState(candidate)
+                                .isAir();
+
+
+                /*
+                 * Destination must be empty.
+                 */
+                boolean placementEmpty =
+                        minecraft.level
+                                .getBlockState(placementPos)
+                                .isAir();
+
+
+                if (groundSolid
+                        && placementEmpty) {
+
+                    ground = candidate;
+                    break;
+                }
+            }
+        }
+    }
+
+
+    if (ground == null) {
+
+        System.out.println(
+                "[AI Placement] No valid nearby "
+                        + "placement position."
+        );
+
+        return false;
+    }
+
+
+    BlockPos placementPos =
+            ground.above();
+
+
+    // -----------------------------------------------------
+    // CREATE HIT RESULT
+    // -----------------------------------------------------
+
+    Vec3 hitLocation =
+            new Vec3(
+                    ground.getX() + 0.5,
+                    ground.getY() + 1.0,
+                    ground.getZ() + 0.5
+            );
+
+
+    BlockHitResult hit =
+            new BlockHitResult(
+                    hitLocation,
+                    Direction.UP,
+                    ground,
+                    false
+            );
+
+
+    faceBlock(
+            minecraft,
+            ground
+    );
+
+
+    System.out.println(
+            "[AI Placement] Attempting crafting table "
+                    + "placement at "
+                    + placementPos
+    );
+
+
+    // -----------------------------------------------------
+    // PLACE
+    // -----------------------------------------------------
+
+    var result =
+            minecraft.gameMode.useItemOn(
+                    minecraft.player,
+                    InteractionHand.MAIN_HAND,
+                    hit
+            );
+
+
+    System.out.println(
+            "[AI Placement] Interaction result: "
+                    + result
+    );
+
+
+    /*
+     * Don't claim that the block exists yet.
+     *
+     * This only tells us whether Minecraft accepted
+     * the interaction attempt.
+     */
+    boolean accepted =
+            result.consumesAction();
+
+
+    if (accepted) {
+
+        System.out.println(
+                "[AI Placement] Placement interaction "
+                        + "accepted by Minecraft."
+        );
+
+    } else {
+
+        System.out.println(
+                "[AI Placement] Placement interaction "
+                        + "was rejected."
+        );
+    }
+
+
+    return accepted;
+}
 
 
     // =========================================================
