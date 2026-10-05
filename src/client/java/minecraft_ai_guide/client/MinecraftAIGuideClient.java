@@ -12,7 +12,9 @@ import minecraft_ai_guide.client.guide.TaskNode;
 import minecraft_ai_guide.client.guide.TaskPlanner;
 import minecraft_ai_guide.agent.ActionExecutor;
 import com.mojang.blaze3d.platform.InputConstants;
-
+import minecraft_ai_guide.agent.AgentAction;
+import minecraft_ai_guide.agent.GameState;
+import minecraft_ai_guide.client.guide.GameplayAction;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
@@ -48,6 +50,7 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
     private static KeyMapping stopRecordingKey;
     private static final MinecraftAgent AGENT =
         new MinecraftAgent();
+    private static GameState observationStartState = null;
 
     /*
      * TRAINING MODE:
@@ -113,13 +116,32 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
         );
 
         /*
-         * Enter autonomous training mode.
+         * SAFE TRAINING MODE
+         *
+         * The player remains in control.
+         * We observe gameplay instead of allowing
+         * the autonomous ActionExecutor to move,
+         * jump, mine, or place blocks.
          */
+        AGENT.stop();
+        ActionExecutor.stopMovement(client);
+
         guideMode = false;
+cachedRecommendation = null;
 
-        cachedRecommendation = null;
+/*
+ * Remember what the player's state looked like
+ * before the demonstration.
+ */
+observationStartState =
+        GameState.observe(client);
 
-        AGENT.start(client);
+GameplayRecorder.startRecording(client);
+
+        System.out.println(
+                "[Minecraft AI Guide] Safe observation started. "
+                        + "You still control the player."
+        );
     }
 
     while (stopRecordingKey.consumeClick()) {
@@ -134,6 +156,37 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
         AGENT.stop();
 
         ActionExecutor.stopMovement(client);
+
+        if (GameplayRecorder.isRecording()) {
+
+    GameplayRecorder.stopRecording();
+
+    GameState observationEndState =
+            GameState.observe(client);
+
+    /*
+     * Convert useful inventory gains from the
+     * player's demonstration into experiences.
+     */
+    for (GameplayAction action
+            : GameplayRecorder.getActions()) {
+
+        if (!"GAINED".equals(
+                action.getType()
+        )) {
+            continue;
+        }
+
+        AGENT.learnFromObservation(
+                observationStartState,
+                observationEndState,
+                AgentAction.COLLECT_RESOURCE,
+                action.getItemId()
+        );
+    }
+
+    observationStartState = null;
+}
 
         /*
          * Preserve ExperienceMemory and switch to
@@ -159,7 +212,15 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
         );
     }
 
-    AGENT.update(client);
+    GameplayRecorder.update(client);
+
+    /*
+     * Autonomous agent updates are intentionally disabled
+     * in safe observation mode.
+     */
+    if (AGENT.isRunning()) {
+        AGENT.update(client);
+    }
 });
     }
 
@@ -496,7 +557,7 @@ String trainingStatus;
 if (AGENT.isRunning()) {
 
     trainingStatus =
-            "TRAINING - AI controlling player";
+            "TRAINING - observing your gameplay";
 
 } else if (guideMode) {
 
@@ -591,7 +652,7 @@ graphics.text(
 
 graphics.text(
         minecraft.font,
-        "R: Train AI | J: Guide Mode",
+        "R: Observe Gameplay | J: Guide Mode",
         10,
         aiStatusY + 52,
         0xFFFFFFFF,

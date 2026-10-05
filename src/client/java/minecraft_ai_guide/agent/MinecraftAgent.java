@@ -607,4 +607,67 @@ public int getExperienceCount() {
 
     return memory.size();
 }
+public void learnFromObservation(
+        GameState beforeState,
+        GameState afterState,
+        AgentAction observedAction,
+        String target
+) {
+
+    if (beforeState == null
+            || afterState == null
+            || observedAction == null) {
+        return;
+    }
+
+    double reward =
+            RewardSystem.calculate(
+                    beforeState,
+                    afterState
+            );
+
+    /*
+     * Human demonstrations are especially useful
+     * when they actually acquire the intended item.
+     */
+    if (target != null) {
+
+        int beforeCount =
+                beforeState.getInventory()
+                        .getOrDefault(target, 0);
+
+        int afterCount =
+                afterState.getInventory()
+                        .getOrDefault(target, 0);
+
+        if (afterCount > beforeCount) {
+            reward += 1.0;
+        }
+    }
+
+    AgentExperience experience =
+            new AgentExperience(
+                    beforeState,
+                    observedAction,
+                    afterState,
+                    reward,
+                    target
+            );
+
+    memory.add(experience);
+
+    System.out.println(
+            "[AI Learning] Learned from player: "
+                    + observedAction
+                    + " target="
+                    + target
+                    + " reward="
+                    + reward
+    );
+
+    System.out.println(
+            "[AI Learning] Experiences collected: "
+                    + memory.size()
+    );
+}
 }
