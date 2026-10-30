@@ -1,0 +1,9 @@
+{
+  "key.category.minecraft-ai-guide.guide": "Minecraft AI Guide",
+  "key.minecraft-ai-guide.start_recording": "Observe gameplay (player controlled)",
+  "key.minecraft-ai-guide.stop_recording": "Enter guide mode",
+  "key.minecraft-ai-guide.start_experimental_training": "EXPERIMENTAL: Start autonomous one-log RL",
+  "key.minecraft-ai-guide.stop_experimental_training": "STOP experimental autonomous training",
+  "key.minecraft-ai-guide.start_experimental_evaluation": "EXPERIMENTAL: Evaluate one-log policy (no learning)",
+  "key.minecraft-ai-guide.task_menu": "Open accessible task selection"
+}

@@ -45,6 +45,39 @@ public class RecipeEvaluator {
 
 
     // =========================================================
+    // GET CRAFTING STATION
+    // =========================================================
+
+    public static ItemStack getCraftingStation(
+            Minecraft minecraft,
+            RecipeDisplayEntry recipe
+    ) {
+
+        if (minecraft.level == null) {
+            return ItemStack.EMPTY;
+        }
+
+        ContextMap context =
+                SlotDisplayContext.fromLevel(
+                        minecraft.level
+                );
+
+        ItemStack station =
+                recipe.display()
+                        .craftingStation()
+                        .resolveForFirstStack(
+                                context
+                        );
+
+        if (station == null) {
+            return ItemStack.EMPTY;
+        }
+
+        return station;
+    }
+
+
+    // =========================================================
     // GET OUTPUT ID
     // =========================================================
 
@@ -66,6 +99,32 @@ public class RecipeEvaluator {
         return BuiltInRegistries.ITEM
                 .getKey(output.getItem())
                 .toString();
+    }
+
+
+    // =========================================================
+    // GET OUTPUT COUNT
+    // =========================================================
+
+    public static int getOutputCount(
+            Minecraft minecraft,
+            RecipeDisplayEntry recipe
+    ) {
+
+        ItemStack output =
+                getOutput(
+                        minecraft,
+                        recipe
+                );
+
+        if (output.isEmpty()) {
+            return 1;
+        }
+
+        return Math.max(
+                1,
+                output.getCount()
+        );
     }
 
 

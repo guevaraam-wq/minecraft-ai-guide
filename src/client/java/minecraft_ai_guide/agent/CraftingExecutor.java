@@ -39,6 +39,8 @@ public class CraftingExecutor {
     private static boolean waitingForResult =
             false;
 
+    private static boolean timedOut;
+
     private static String lastCraftTarget =
             null;
 
@@ -583,6 +585,8 @@ public class CraftingExecutor {
         }
 
 
+        lastCraftTarget = null;
+        timedOut = false;
         RecipeDisplayEntry recipe =
                 chooseCraftableRecipe(
                         minecraft
@@ -703,7 +707,7 @@ public class CraftingExecutor {
             );
 
             reset();
-
+            timedOut = true;
             return false;
         }
 
@@ -788,6 +792,8 @@ public class CraftingExecutor {
     // CRAFTING STATE
     // =========================================================
 
+    public static boolean didTimeOut() { return timedOut; }
+
     public static boolean isCrafting() {
 
         return waitingForResult;
@@ -801,7 +807,7 @@ public class CraftingExecutor {
 
 
     public static void reset() {
-
+        timedOut = false;
         waitingForResult =
                 false;
 

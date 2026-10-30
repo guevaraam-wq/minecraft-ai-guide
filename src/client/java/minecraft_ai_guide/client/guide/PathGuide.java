@@ -2,100 +2,36 @@ package minecraft_ai_guide.client.guide;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.particles.ParticleTypes;
-
-import java.util.Collections;
+import net.minecraft.core.particles.DustParticleOptions;
 import java.util.List;
 
-public class PathGuide {
+/** Blue breadcrumbs only. Stable footstep and destination geometry is rendered by TargetHighlighter. */
+public final class PathGuide {
+    private static final DustParticleOptions BLUE = new DustParticleOptions(0x249CFF, 1.25F);
 
-    private static List<BlockPos> cachedPath =
-            Collections.emptyList();
-
-    private static BlockPos lastStart = null;
-    private static BlockPos lastTarget = null;
-
-    private static final double RECALCULATE_DISTANCE = 2.0;
-
-    public static void showPath(
-            Minecraft minecraft,
-            BlockPos target
-    ) {
-
-        if (minecraft.player == null ||
-                minecraft.level == null ||
-                target == null) {
-            return;
+    public static void showRoute(Minecraft mc, List<BlockPos> path, BlockPos destination, BlockPos next) {
+        if (mc.level == null || mc.player == null) return;
+        // Only draw the currently traversable prefix, never through unmined terrain.
+        for (int i = 1; i < Math.min(path.size(), 18); i++) {
+            BlockPos from = path.get(i - 1), to = path.get(i);
+            for (int dot = 0; dot < 5; dot++) {
+                double t = dot / 5.0;
+                mc.level.addParticle(BLUE, from.getX() + .5 + (to.getX() - from.getX()) * t,
+                        from.getY() + .18 + (to.getY() - from.getY()) * t,
+                        from.getZ() + .5 + (to.getZ() - from.getZ()) * t, 0, 0, 0);
+            }
         }
-
-        BlockPos currentPosition =
-                minecraft.player.blockPosition();
-
-        boolean targetChanged =
-                lastTarget == null ||
-                !lastTarget.equals(target);
-
-        boolean playerMovedEnough =
-                lastStart == null ||
-                horizontalDistance(
-                        currentPosition,
-                        lastStart
-                ) >= RECALCULATE_DISTANCE;
-
-        if (targetChanged ||
-                playerMovedEnough ||
-                cachedPath.isEmpty()) {
-
-            cachedPath =
-                    Pathfinder.findPath(
-                            minecraft,
-                            currentPosition,
-                            target
-                    );
-
-            lastStart = currentPosition.immutable();
-            lastTarget = target.immutable();
-        }
-
-        drawPath(minecraft);
+        TargetHighlighter.setNavigation(destination, next);
     }
-
-    private static void drawPath(
-            Minecraft minecraft
-    ) {
-
-        for (BlockPos pathPosition : cachedPath) {
-
-            double x = pathPosition.getX() + 0.5;
-            double y = pathPosition.getY() + 0.15;
-            double z = pathPosition.getZ() + 0.5;
-
-            minecraft.level.addParticle(
-                    ParticleTypes.HAPPY_VILLAGER,
-                    x,
-                    y,
-                    z,
-                    0,
-                    0,
-                    0
-            );
-        }
+    public static void showPath(Minecraft mc, BlockPos target) {
+        if (mc.player == null || mc.level == null || target == null) return;
+        var world = Pathfinder.guideWorld(mc);
+        var route = NavigationPlanner.plan(world, Pathfinder.cell(mc.player.blockPosition()), Pathfinder.cell(target),
+                NavigationPlanner.Goal.INTERACT, false);
+        var instruction = NavigationPlanner.next(world, route, Pathfinder.cell(mc.player.blockPosition()));
+        showRoute(mc, instruction.walkPath().stream().map(Pathfinder::block).toList(), target,
+                instruction.action() == NavigationPlanner.Action.WALK ? Pathfinder.block(instruction.marker()) : null);
     }
-
-    private static double horizontalDistance(
-            BlockPos first,
-            BlockPos second
-    ) {
-
-        double dx =
-                first.getX() - second.getX();
-
-        double dz =
-                first.getZ() - second.getZ();
-
-        return Math.sqrt(
-                dx * dx +
-                dz * dz
-        );
-    }
+    public static void clearPath() { TargetHighlighter.clearNavigation(); }
+    private PathGuide() {}
 }

@@ -35,8 +35,8 @@ public class ActionEvaluator {
 
         for (AgentExperience experience : experiences) {
 
-            AgentAction action =
-                    experience.getAction();
+            if (experience.getOutcome() == ActionOutcome.CANCELLED) continue;
+            AgentAction action = experience.getAction();
 
             /*
              * Ignore WAIT because it does not

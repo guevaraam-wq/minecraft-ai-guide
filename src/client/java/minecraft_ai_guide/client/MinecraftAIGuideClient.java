@@ -1,20 +1,10 @@
 package minecraft_ai_guide.client;
 import minecraft_ai_guide.agent.ActionExecutor;
 import minecraft_ai_guide.agent.MinecraftAgent;
-import minecraft_ai_guide.client.guide.CraftingGuide;
-import minecraft_ai_guide.client.guide.CraftingRequirement;
+import minecraft_ai_guide.agent.OneLogTraining;
 import minecraft_ai_guide.client.guide.GameplayRecorder;
-import minecraft_ai_guide.client.guide.GuideStep;
-import minecraft_ai_guide.client.guide.PathGuide;
-import minecraft_ai_guide.client.guide.StoneAxeTaskGraph;
-import minecraft_ai_guide.client.guide.TargetFinder;
-import minecraft_ai_guide.client.guide.TaskNode;
-import minecraft_ai_guide.client.guide.TaskPlanner;
-import minecraft_ai_guide.agent.ActionExecutor;
 import com.mojang.blaze3d.platform.InputConstants;
-import minecraft_ai_guide.agent.AgentAction;
-import minecraft_ai_guide.agent.GameState;
-import minecraft_ai_guide.client.guide.GameplayAction;
+import minecraft_ai_guide.client.guide.LearnedSequence;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
@@ -24,7 +14,6 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
 
 public class MinecraftAIGuideClient implements ClientModInitializer {
@@ -43,14 +32,22 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
                     )
             );
 
-    private static final TaskNode STONE_AXE_GOAL =
-            StoneAxeTaskGraph.createGraph();
 
+    private static final minecraft_ai_guide.client.guide.StoneAxeGuide ACCESS_GUIDE =
+            new minecraft_ai_guide.client.guide.StoneAxeGuide();
+
+    private static final minecraft_ai_guide.client.goals.TaskGoalController TASKS =
+            new minecraft_ai_guide.client.goals.TaskGoalController(ACCESS_GUIDE);
+    private static KeyMapping taskMenuKey;
+    private static final OneLogTraining TRAINING = new OneLogTraining();
+    private static boolean trainingStopRequested;
+    private static KeyMapping startTrainingKey;
+    private static KeyMapping startEvaluationKey;
+    private static KeyMapping stopTrainingKey;
     private static KeyMapping startRecordingKey;
     private static KeyMapping stopRecordingKey;
     private static final MinecraftAgent AGENT =
         new MinecraftAgent();
-    private static GameState observationStartState = null;
 
     /*
      * TRAINING MODE:
@@ -59,28 +56,15 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
      *
      * GUIDE MODE:
      *     The player controls Minecraft while the
-     *     learned agent provides recommendations.
+     *     recipe-based accessibility guide provides one instruction.
      */
-    private static boolean guideMode = false;
-
-    private static minecraft_ai_guide.agent.AgentAction cachedRecommendation =
-            null;
-
-    private static long lastRecommendationUpdate = 0;
-
-    private static final long RECOMMENDATION_UPDATE_INTERVAL =
-            1000;
-
-    private static long lastPathUpdate = 0;
-    private static final long PATH_UPDATE_INTERVAL = 500;
-
-    private static BlockPos cachedTreeTarget = null;
-    private static long lastTargetSearch = 0;
-    private static final long TARGET_SEARCH_INTERVAL = 1000;
+    private static boolean guideMode = true;
 
     @Override
     public void onInitializeClient() {
 
+        minecraft_ai_guide.client.guide.TargetHighlighter.initialize();
+        minecraft_ai_guide.client.goals.ShelterBuildMarker.initialize();
         HudElementRegistry.attachElementBefore(
                 VanillaHudElements.CHAT,
                 GUIDE_HUD,
@@ -107,36 +91,62 @@ public class MinecraftAIGuideClient implements ClientModInitializer {
                         )
                 );
 
+        taskMenuKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.minecraft-ai-guide.task_menu", InputConstants.Type.KEYSYM, InputConstants.KEY_G, GUIDE_CATEGORY));
+        startTrainingKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.minecraft-ai-guide.start_experimental_training", InputConstants.Type.KEYSYM,
+                InputConstants.KEY_F7, GUIDE_CATEGORY));
+        startEvaluationKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.minecraft-ai-guide.start_experimental_evaluation", InputConstants.Type.KEYSYM,
+                InputConstants.KEY_F9, GUIDE_CATEGORY));
+        stopTrainingKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.minecraft-ai-guide.stop_experimental_training", InputConstants.Type.KEYSYM,
+                InputConstants.KEY_F8, GUIDE_CATEGORY));
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.CLIENT_STOPPING
+                .register(client -> TRAINING.stop(client, "Stopped: client closing"));
+        net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT
+                .register((handler, client) -> TRAINING.stop(client, "Stopped: disconnected"));
+
+        ClientTickEvents.START_CLIENT_TICK.register(client -> {
+            while (stopTrainingKey.consumeClick()) {
+                TRAINING.stop(client, "Stopped by player");
+                trainingStopRequested = true;
+            }
+            TRAINING.checkEnvironment(client);
+        });
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
+    // Stop wins over start if both controls arrive in the same tick.
+    boolean stopped = trainingStopRequested;
+    trainingStopRequested = false;
+    while (stopTrainingKey.consumeClick()) {
+        TRAINING.stop(client, "Stopped by player");
+        stopped = true;
+    }
+
 
     while (startRecordingKey.consumeClick()) {
+        TRAINING.stop(client, "Stopped: observation selected");
+        stopped = true;
+
 
         System.out.println(
-                "[Minecraft AI Guide] TRAINING MODE"
+                "[Minecraft AI Guide] OBSERVATION MODE (player controlled)"
         );
 
         /*
-         * SAFE TRAINING MODE
+         * PLAYER-CONTROLLED OBSERVATION
          *
          * The player remains in control.
          * We observe gameplay instead of allowing
          * the autonomous ActionExecutor to move,
          * jump, mine, or place blocks.
          */
-        AGENT.stop();
+        AGENT.stop(client);
         ActionExecutor.stopMovement(client);
 
         guideMode = false;
-cachedRecommendation = null;
-
-/*
- * Remember what the player's state looked like
- * before the demonstration.
- */
-observationStartState =
-        GameState.observe(client);
-
-GameplayRecorder.startRecording(client);
+        ACCESS_GUIDE.reset();
+        GameplayRecorder.startRecording(client);
 
         System.out.println(
                 "[Minecraft AI Guide] Safe observation started. "
@@ -145,6 +155,8 @@ GameplayRecorder.startRecording(client);
     }
 
     while (stopRecordingKey.consumeClick()) {
+        TRAINING.stop(client, "Stopped: guide mode selected");
+        stopped = true;
 
         System.out.println(
                 "[Minecraft AI Guide] GUIDE MODE"
@@ -153,7 +165,7 @@ GameplayRecorder.startRecording(client);
         /*
          * Stop autonomous control immediately.
          */
-        AGENT.stop();
+        AGENT.stop(client);
 
         ActionExecutor.stopMovement(client);
 
@@ -161,31 +173,11 @@ GameplayRecorder.startRecording(client);
 
     GameplayRecorder.stopRecording();
 
-    GameState observationEndState =
-            GameState.observe(client);
+    // Inventory deltas remain useful for demonstration guidance, but they
+    // cannot establish which action caused a change. Only executor attempts
+    // are admitted to ExperienceMemory.
+    LearnedSequence.learnFrom(GameplayRecorder.getActions());
 
-    /*
-     * Convert useful inventory gains from the
-     * player's demonstration into experiences.
-     */
-    for (GameplayAction action
-            : GameplayRecorder.getActions()) {
-
-        if (!"GAINED".equals(
-                action.getType()
-        )) {
-            continue;
-        }
-
-        AGENT.learnFromObservation(
-                observationStartState,
-                observationEndState,
-                AgentAction.COLLECT_RESOURCE,
-                action.getItemId()
-        );
-    }
-
-    observationStartState = null;
 }
 
         /*
@@ -194,469 +186,102 @@ GameplayRecorder.startRecording(client);
          */
         guideMode = true;
 
-        cachedRecommendation =
-                AGENT.getLearnedRecommendation(
-                        client
-                );
-
-        lastRecommendationUpdate =
-                System.currentTimeMillis();
-
-        System.out.println(
-                "[Minecraft AI Guide] Player control restored."
-        );
-
-        System.out.println(
-                "[Minecraft AI Guide] Learned recommendation: "
-                        + cachedRecommendation
-        );
+        ACCESS_GUIDE.reset();
+        System.out.println("[Minecraft AI Guide] Adaptive stone-axe guidance; you control the player.");
     }
 
+    while (taskMenuKey.consumeClick()) {
+        TRAINING.stop(client, "Stopped: task selection opened");
+        stopped = true;
+        boolean conflict=java.util.Arrays.stream(client.options.keyMappings).anyMatch(key->key!=taskMenuKey && key.same(taskMenuKey));
+        if(conflict) TASKS.menuNotice("Task key conflicts with another binding. Remap it in Controls.");
+        else if(client.player!=null && client.level!=null && client.gui.screen()==null){
+            AGENT.stop(client);
+            if(GameplayRecorder.isRecording())GameplayRecorder.stopRecording();
+            guideMode=true;
+            TASKS.tick(client,true);
+            client.gui.setScreen(new minecraft_ai_guide.client.goals.TaskMenuScreen(TASKS));
+        }
+    }
+    while (startTrainingKey.consumeClick()) {
+        if (!stopped && !TRAINING.isRunning()) {
+            if (!GameplayRecorder.isRecording()) AGENT.stop(client);
+            TRAINING.start(client);
+        }
+    }
+    while (startEvaluationKey.consumeClick()) {
+        if (!stopped && !TRAINING.isRunning()) {
+            boolean conflict = java.util.Arrays.stream(client.options.keyMappings)
+                    .anyMatch(key -> key != startEvaluationKey && key.same(startEvaluationKey));
+            if (conflict) {
+                TRAINING.refuseActivation("evaluation key conflicts; remap it in Controls > Minecraft AI Guide");
+            } else {
+                if (!GameplayRecorder.isRecording()) AGENT.stop(client);
+                TRAINING.start(client, minecraft_ai_guide.agent.EpisodeMode.EVALUATION);
+            }
+        }
+    }
+    TRAINING.tick(client);
     GameplayRecorder.update(client);
+    TASKS.tick(client, guideMode && !TRAINING.isRunning() && !GameplayRecorder.isRecording());
 
     /*
      * Autonomous agent updates are intentionally disabled
      * in safe observation mode.
      */
-    if (AGENT.isRunning()) {
+    if (!TRAINING.isRunning() && AGENT.isRunning()) {
         AGENT.update(client);
     }
 });
-    }
-
-    private static TaskNode findTaskById(
-            TaskNode task,
-            String id
-    ) {
-
-        if (task.getId().equals(id)) {
-            return task;
-        }
-
-        for (TaskNode dependency : task.getDependencies()) {
-
-            TaskNode result =
-                    findTaskById(
-                            dependency,
-                            id
-                    );
-
-            if (result != null) {
-                return result;
-            }
-        }
-
-        return null;
     }
 
     private static void renderGuide(
             GuiGraphicsExtractor graphics,
             net.minecraft.client.DeltaTracker deltaTracker
     ) {
-
-        Minecraft minecraft =
-                Minecraft.getInstance();
-
-        if (minecraft.player == null) {
-            return;
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null || minecraft.gui.screen() instanceof minecraft_ai_guide.client.goals.TaskMenuScreen) return;
+        String title = TASKS.title();
+        String instruction;
+        String detail = "";
+        String controls = taskMenuKey.getTranslatedKeyMessage().getString()+": Tasks | "
+                +stopRecordingKey.getTranslatedKeyMessage().getString()+": Return to guide";
+        if (TRAINING.isRunning()) {
+            title = "EXPERIMENTAL " + TRAINING.mode();
+            instruction = TRAINING.status();
+            controls = "F8: STOP autonomous experiment";
+        } else if (GameplayRecorder.isRecording() || !guideMode) {
+            instruction = "Press J to return to your selected goal.";
+        } else {
+            instruction = TASKS.instruction();
+            detail = TASKS.detail();
+            if(TASKS.selection().active() && !TASKS.selection().paused())detail = (detail.isEmpty()?"":detail+"\n")+"Why: "+TASKS.why();
         }
-
-        GuideStep currentStep =
-                TaskPlanner.getNextStep(
-                        minecraft,
-                        STONE_AXE_GOAL
-                );
-
-        String craftingInstruction = "";
-
-        if (currentStep
-                .getStepId()
-                .equals("craft_wooden_pickaxe")) {
-
-            if (CraftingGuide
-                    .isCraftingTableOpen(minecraft)) {
-
-                craftingInstruction =
-                        "Crafting table open - ready for the next step";
-
-            } else {
-
-                craftingInstruction =
-                        "Next action: Open your crafting table";
+        graphics.text(minecraft.font, title, 10, 10, 0xFFFFFFFF, true);
+        int y = 26;
+        if(guideMode && !TRAINING.isRunning() && !GameplayRecorder.isRecording() && TASKS.temporary()){
+            for(var line:minecraft.font.split(net.minecraft.network.chat.Component.literal("Temporary task: "+TASKS.nextStep().title()),
+                    Math.max(100,Math.min(360,minecraft.getWindow().getGuiScaledWidth()-24)))){
+                graphics.text(minecraft.font,line,10,y,0xFFFFFFFF,true);y+=12;
             }
         }
-
-        TaskNode currentTask =
-                findTaskById(
-                        STONE_AXE_GOAL,
-                        currentStep.getStepId()
-                );
-
-        String targetText = "";
-        String directionText = "";
-
-        if (currentStep
-                .getStepId()
-                .equals("collect_log")) {
-
-            long currentTime =
-                    System.currentTimeMillis();
-
-            if (currentTime - lastTargetSearch
-                    >= TARGET_SEARCH_INTERVAL
-                    || cachedTreeTarget == null) {
-
-                cachedTreeTarget =
-                        TargetFinder
-                                .findNearestLog(
-                                        minecraft
-                                );
-
-                lastTargetSearch =
-                        currentTime;
+        int width = Math.max(100, Math.min(360, minecraft.getWindow().getGuiScaledWidth() - 24));
+        for (var line : minecraft.font.split(net.minecraft.network.chat.Component.literal(instruction), width)) {
+            graphics.text(minecraft.font, line, 10, y, 0xFFFFFFFF, true);
+            y += 12;
+        }
+        if (!detail.isEmpty()) {
+            for(var line:minecraft.font.split(net.minecraft.network.chat.Component.literal(detail),width)){
+                graphics.text(minecraft.font,line,10,y+4,0xFFFFFFFF,true);y+=12;
             }
-
-            BlockPos treePos =
-                    cachedTreeTarget;
-
-            if (treePos != null) {
-
-                if (currentTime - lastPathUpdate
-                        >= PATH_UPDATE_INTERVAL) {
-
-                    PathGuide.showPath(
-                            minecraft,
-                            treePos
-                    );
-
-                    lastPathUpdate =
-                            currentTime;
-                }
-
-                double distance =
-                        minecraft.player
-                                .blockPosition()
-                                .distSqr(treePos);
-
-                int blocksAway =
-                        (int) Math.sqrt(distance);
-
-                targetText =
-                        "Tree found: "
-                                + blocksAway
-                                + " blocks away";
-
-                double dx =
-                        treePos.getX()
-                                - minecraft.player.getX();
-
-                double dz =
-                        treePos.getZ()
-                                - minecraft.player.getZ();
-
-                double targetAngle =
-                        Math.toDegrees(
-                                Math.atan2(
-                                        -dx,
-                                        dz
-                                )
-                        );
-
-                double playerYaw =
-                        minecraft.player.getYRot();
-
-                double difference =
-                        targetAngle
-                                - playerYaw;
-
-                while (difference > 180) {
-                    difference -= 360;
-                }
-
-                while (difference < -180) {
-                    difference += 360;
-                }
-
-                if (difference >= -25
-                        && difference <= 25) {
-
-                    directionText =
-                            "Direction: Straight ahead";
-
-                } else if (difference > 25
-                        && difference < 155) {
-
-                    directionText =
-                            "Direction: Turn left";
-
-                } else if (difference < -25
-                        && difference > -155) {
-
-                    directionText =
-                            "Direction: Turn right";
-
-                } else {
-
-                    directionText =
-                            "Direction: Behind you";
-                }
-
-            } else {
-
-                targetText =
-                        "No tree found nearby";
+            y+=4;
+        }
+        if(guideMode && !TRAINING.isRunning() && !GameplayRecorder.isRecording() && !TASKS.reminder().isEmpty()){
+            for(var line:minecraft.font.split(net.minecraft.network.chat.Component.literal(TASKS.reminder()),width)){
+                graphics.text(minecraft.font,line,10,y+8,0xFFCCCCCC,true);y+=12;
             }
         }
-
-        graphics.text(
-                minecraft.font,
-                "Goal: Craft a Stone Axe",
-                10,
-                10,
-                0xFFFFFFFF,
-                true
-        );
-
-        graphics.text(
-                minecraft.font,
-                currentStep.getInstruction(),
-                10,
-                22,
-                0xFFFFFFFF,
-                true
-        );
-
-        if (!targetText.isEmpty()) {
-
-            graphics.text(
-                    minecraft.font,
-                    targetText,
-                    10,
-                    34,
-                    0xFFFFFFFF,
-                    true
-            );
-        }
-
-        if (!directionText.isEmpty()) {
-
-            graphics.text(
-                    minecraft.font,
-                    directionText,
-                    10,
-                    46,
-                    0xFFFFFFFF,
-                    true
-            );
-        }
-
-        int requirementY = 58;
-
-        if (currentTask != null
-                && !currentTask
-                        .getRequirements()
-                        .isEmpty()) {
-
-            graphics.text(
-                    minecraft.font,
-                    "Materials:",
-                    10,
-                    requirementY,
-                    0xFFFFFFFF,
-                    true
-            );
-
-            requirementY += 12;
-
-            for (CraftingRequirement requirement
-                    : currentTask.getRequirements()) {
-
-                int amountOwned = 0;
-
-                for (int i = 0;
-                     i < minecraft.player
-                             .getInventory()
-                             .getContainerSize();
-                     i++) {
-
-                    var stack =
-                            minecraft.player
-                                    .getInventory()
-                                    .getItem(i);
-
-                    if (requirement.matches(stack)) {
-                        amountOwned +=
-                                stack.getCount();
-                    }
-                }
-
-                boolean hasEnough =
-                        amountOwned
-                                >= requirement
-                                .getAmount();
-
-                String symbol =
-                        hasEnough
-                                ? "[X] "
-                                : "[ ] ";
-
-                String requirementText =
-                        symbol
-                                + requirement
-                                .getDisplayName()
-                                + ": "
-                                + amountOwned
-                                + "/"
-                                + requirement
-                                .getAmount();
-
-                graphics.text(
-                        minecraft.font,
-                        requirementText,
-                        10,
-                        requirementY,
-                        0xFFFFFFFF,
-                        true
-                );
-
-                requirementY += 12;
-            }
-        }
-
-        if (!craftingInstruction.isEmpty()) {
-
-            graphics.text(
-                    minecraft.font,
-                    craftingInstruction,
-                    10,
-                    requirementY,
-                    0xFFFFFFFF,
-                    true
-            );
-        }
-        // =========================================================
-// AI LEARNING STATUS
-// =========================================================
-
-int aiStatusY =
-        requirementY + 24;
-
-
-graphics.text(
-        minecraft.font,
-        "AI Training:",
-        10,
-        aiStatusY,
-        0xFFFFFFFF,
-        true
-);
-
-
-String trainingStatus;
-
-if (AGENT.isRunning()) {
-
-    trainingStatus =
-            "TRAINING - observing your gameplay";
-
-} else if (guideMode) {
-
-    trainingStatus =
-            "GUIDE - You control player";
-
-} else {
-
-    trainingStatus =
-            "STOPPED";
-}
-
-
-graphics.text(
-        minecraft.font,
-        "Status: " + trainingStatus,
-        10,
-        aiStatusY + 12,
-        0xFFFFFFFF,
-        true
-);
-
-
-graphics.text(
-        minecraft.font,
-        "Experiences learned: "
-                + AGENT.getExperienceCount(),
-        10,
-        aiStatusY + 24,
-        0xFFFFFFFF,
-        true
-);
-
-
-/*
- * Recommendation evaluation is deliberately
- * throttled.
- *
- * renderGuide() executes every rendered frame,
- * so calling the learning system directly here
- * would evaluate and print the policy dozens of
- * times per second.
- *
- * In GUIDE MODE we refresh only once per second.
- */
-if (guideMode) {
-
-    long now =
-            System.currentTimeMillis();
-
-    if (now - lastRecommendationUpdate
-            >= RECOMMENDATION_UPDATE_INTERVAL) {
-
-        cachedRecommendation =
-                AGENT.getLearnedRecommendation(
-                        minecraft
-                );
-
-        lastRecommendationUpdate =
-                now;
-    }
-}
-
-var learnedRecommendation =
-        cachedRecommendation;
-
-
-String recommendationText;
-
-if (learnedRecommendation != null) {
-
-    recommendationText =
-            "AI recommends: "
-                    + learnedRecommendation;
-
-} else {
-
-    recommendationText =
-            "AI recommends: Learning...";
-}
-
-
-graphics.text(
-        minecraft.font,
-        recommendationText,
-        10,
-        aiStatusY + 36,
-        0xFFFFFFFF,
-        true
-);
-
-
-graphics.text(
-        minecraft.font,
-        "R: Observe Gameplay | J: Guide Mode",
-        10,
-        aiStatusY + 52,
-        0xFFFFFFFF,
-        true
-);
+        graphics.text(minecraft.font, controls, 10, y + 12, 0xFFCCCCCC, true);
+        if(!TASKS.notice().isEmpty())graphics.text(minecraft.font, TASKS.notice(),10,y+26,0xFFFFFF80,true);
     }
 }
