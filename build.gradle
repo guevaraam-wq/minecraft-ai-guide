@@ -45,6 +45,11 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 java {
+	// Select the required compiler even when Gradle runs under an older JDK.
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(25)
+	}
+
 	// Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
 	// if it is present.
 	// If you remove this line, sources will not be generated.
@@ -52,6 +57,28 @@ java {
 
 	sourceCompatibility = JavaVersion.VERSION_25
 	targetCompatibility = JavaVersion.VERSION_25
+}
+
+// Headless regression checks for client-side planning and attempt accounting.
+// These use explicit assertions and do not launch Minecraft or need a test library.
+sourceSets {
+	clientTest {
+		compileClasspath += sourceSets.client.output + sourceSets.client.compileClasspath
+		runtimeClasspath += sourceSets.client.runtimeClasspath
+	}
+}
+
+tasks.register('clientTest', JavaExec) {
+	dependsOn tasks.named('clientTestClasses')
+	classpath = sourceSets.clientTest.runtimeClasspath
+	mainClass = 'minecraft_ai_guide.agent.FoundationTests'
+	javaLauncher = javaToolchains.launcherFor {
+		languageVersion = JavaLanguageVersion.of(25)
+	}
+}
+
+tasks.named('check') {
+	dependsOn tasks.named('clientTest')
 }
 
 jar {

@@ -22,7 +22,149 @@ import java.util.Set;
 
 public class ActionExecutor {
 
+    private static boolean trainingSession;
+    private static net.minecraft.client.server.IntegratedServer trainingServer;
+    private static net.minecraft.client.multiplayer.ClientLevel trainingLevel;
+
+    public record LogTarget(BlockPos position, List<BlockPos> path, double distance, boolean canMine) {
+        public LogTarget { position = position.immutable(); path = List.copyOf(path); }
+    }
+
+    public static boolean trainingAllowed(Minecraft minecraft) {
+        if (minecraft.player == null || minecraft.level == null) return false;
+        var server = minecraft.getSingleplayerServer();
+        return new TrainingEligibility(minecraft.hasSingleplayerServer() && server != null,
+                server != null && server.isPublished(), minecraft.player.isAlive(),
+                !minecraft.player.isCreative() && !minecraft.player.isSpectator(),
+                minecraft.isWindowActive(), minecraft.isPaused(), minecraft.gui.screen() != null).allowed();
+    }
+
+    // Package-private: only the explicitly activated training controller owns this session.
+    static void beginTrainingSession(Minecraft minecraft) {
+        if (!trainingAllowed(minecraft)) throw new IllegalStateException("Local survival world required");
+        cancel(minecraft);
+        drainExperiences();
+        rejectedTargets.clear();
+        trainingServer = minecraft.getSingleplayerServer();
+        trainingLevel = minecraft.level;
+        trainingSession = true;
+    }
+
+    static void endTrainingSession(Minecraft minecraft) {
+        cancel(minecraft);
+        trainingSession = false;
+        trainingServer = null;
+        trainingLevel = null;
+    }
+
+    static boolean trainingSessionValid(Minecraft minecraft) {
+        return trainingWorldMatches(minecraft) && trainingAllowed(minecraft);
+    }
+
+    static boolean trainingWorldMatches(Minecraft minecraft) {
+        return trainingSession && minecraft.player != null && minecraft.level != null
+                && minecraft.getSingleplayerServer() == trainingServer && minecraft.level == trainingLevel;
+    }
+
+    public static LogTarget observeTrainingTarget(Minecraft minecraft) {
+        if (!trainingSessionValid(minecraft)) return null;
+        PathChoice choice = findBestReachableTree(minecraft);
+        if (choice == null) return null;
+        return new LogTarget(choice.target, choice.path,
+                minecraft.player.getEyePosition().distanceTo(Vec3.atCenterOf(choice.target)),
+                canMineFrom(minecraft, choice.target, minecraft.player.getEyePosition()));
+    }
+
+    private static boolean canMineFrom(Minecraft minecraft, BlockPos target, Vec3 eye) {
+        Vec3 center = Vec3.atCenterOf(target);
+        if (eye.distanceTo(center) > minecraft.player.blockInteractionRange() - 0.5) return false;
+        var hit = minecraft.level.clip(new net.minecraft.world.level.ClipContext(eye, center,
+                net.minecraft.world.level.ClipContext.Block.OUTLINE,
+                net.minecraft.world.level.ClipContext.Fluid.NONE, minecraft.player));
+        return hit.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK && hit.getBlockPos().equals(target);
+    }
+
+    static void executeTraining(Minecraft minecraft, AgentAction action, LogTarget target) {
+        if (!trainingSessionValid(minecraft)) {
+            cancel(minecraft);
+            throw new IllegalStateException("Training has no active local-world authorization");
+        }
+        if (isBusy()) throw new IllegalStateException("Previous training action is unfinished");
+        cancel(minecraft);
+        activeAction = action;
+        if (action == AgentAction.EXPLORE) {
+            startExploring(minecraft);
+            return;
+        }
+        if (action != AgentAction.MOVE_TO_RESOURCE && action != AgentAction.COLLECT_RESOURCE)
+            throw new IllegalArgumentException("Only one-log actions are permitted");
+        if (target == null || !minecraft.level.getBlockState(target.position()).is(BlockTags.LOGS)
+                || (action == AgentAction.COLLECT_RESOURCE
+                    && !canMineFrom(minecraft, target.position(), minecraft.player.getEyePosition()))) {
+            beginAttempt(minecraft, action, null);
+            finishAttempt(minecraft, ActionOutcome.FAILURE);
+            activeAction = AgentAction.WAIT;
+            return;
+        }
+        resourceTarget = target.position();
+        if (action == AgentAction.COLLECT_RESOURCE) {
+            beginCollectingResource(minecraft);
+        } else {
+            beginAttempt(minecraft, action, BuiltInRegistries.ITEM.getKey(minecraft.level
+                    .getBlockState(resourceTarget).getBlock().asItem()).toString());
+            currentPath = target.path();
+            pathIndex = 0;
+            stuckAttempts = 0;
+            resetProgressTracking(minecraft);
+        }
+    }
+
     private static final Random RANDOM = new Random();
+    private static final ActionAttemptTracker attempts = new ActionAttemptTracker();
+    private static final long ATTEMPT_TIMEOUT_MS = 30_000;
+    private static final long CONFIRMATION_TIMEOUT_MS = 1_500;
+    private static long confirmationDeadline;
+    private static BlockPos placementTarget;
+    private static GameState lastObservedState;
+    private static net.minecraft.client.multiplayer.ClientLevel attemptLevel;
+
+    private static void beginAttempt(Minecraft minecraft, AgentAction action, String target) {
+        lastObservedState = GameState.observe(minecraft);
+        attemptLevel = minecraft.level;
+        attempts.begin(lastObservedState, action, target, System.currentTimeMillis());
+        confirmationDeadline = 0;
+        placementTarget = null;
+    }
+
+    private static void finishAttempt(Minecraft minecraft, ActionOutcome outcome) {
+        attempts.finish(GameState.observe(minecraft), outcome, System.currentTimeMillis());
+        confirmationDeadline = 0;
+    }
+
+    private static void awaitConfirmation() {
+        activeAction = AgentAction.WAIT;
+        confirmationDeadline = System.currentTimeMillis() + CONFIRMATION_TIMEOUT_MS;
+    }
+
+    public static List<AgentExperience> drainExperiences() {
+        return attempts.drainCompleted();
+    }
+
+    public static void cancel(Minecraft minecraft) {
+        if (attempts.isPending()) {
+            GameState state = minecraft.player != null && minecraft.level != null
+                    && minecraft.level == attemptLevel ? GameState.observe(minecraft) : lastObservedState;
+            attempts.finish(state, ActionOutcome.CANCELLED, System.currentTimeMillis());
+        }
+        stopMovement(minecraft);
+        CraftingExecutor.reset();
+        activeAction = AgentAction.WAIT;
+        resourceTarget = null;
+        currentPath = Collections.emptyList();
+        confirmationDeadline = 0;
+        placementTarget = null;
+    }
+
 
     private static AgentAction activeAction = AgentAction.WAIT;
 
@@ -62,12 +204,15 @@ public class ActionExecutor {
             AgentAction action
     ) {
 
-        if (minecraft.player == null) {
+        if (minecraft.player == null || minecraft.level == null) {
+            cancel(minecraft);
             return;
         }
 
-        stopMovement(minecraft);
-
+        if (trainingSession) throw new IllegalStateException("Experimental policy owns the executor");
+        BlockPos existingTarget = resourceTarget;
+        cancel(minecraft);
+        if (action == AgentAction.COLLECT_RESOURCE) resourceTarget = existingTarget;
         activeAction = action;
 
         switch (action) {
@@ -81,55 +226,31 @@ public class ActionExecutor {
             case COLLECT_RESOURCE ->
                     beginCollectingResource(minecraft);
             case CRAFT -> {
-
-    boolean started =
-            CraftingExecutor.craft(minecraft);
-
-    if (started) {
-        System.out.println(
-                "[AI Agent] Crafting action started"
-        );
-    } else {
-        System.out.println(
-                "[AI Agent] Crafting action failed"
-        );
-    }
-
-    activeAction = AgentAction.WAIT;
-}
-case PLACE_BLOCK -> {
-
-    boolean placed =
-            placeInventoryBlock(
-                    minecraft
-            );
-
-    if (placed) {
-
-        System.out.println(
-                "[AI Agent] Block placement attempted"
-        );
-
-    } else {
-
-        System.out.println(
-                "[AI Agent] No valid block placement available"
-        );
-    }
-
-    activeAction =
-            AgentAction.WAIT;
-}
+                beginAttempt(minecraft, AgentAction.CRAFT, null);
+                boolean started = CraftingExecutor.craft(minecraft);
+                attempts.setTarget(CraftingExecutor.getLastCraftTarget());
+                activeAction = AgentAction.WAIT;
+                if (!started) finishAttempt(minecraft, ActionOutcome.FAILURE);
+            }
+            case PLACE_BLOCK -> {
+                beginAttempt(minecraft, AgentAction.PLACE_BLOCK, "minecraft:crafting_table");
+                if (placeInventoryBlock(minecraft)) {
+                    awaitConfirmation();
+                } else {
+                    activeAction = AgentAction.WAIT;
+                    finishAttempt(minecraft, ActionOutcome.FAILURE);
+                }
+            }
 
             case WAIT -> {
                 // Do nothing.
             }
 
-            default ->
-                    System.out.println(
-                            "[AI Agent] Action not implemented yet: "
-                                    + action
-                    );
+            default -> {
+                beginAttempt(minecraft, action, null);
+                finishAttempt(minecraft, ActionOutcome.FAILURE);
+                activeAction = AgentAction.WAIT;
+            }
         }
     }
 
@@ -142,6 +263,7 @@ case PLACE_BLOCK -> {
             Minecraft minecraft
     ) {
 
+        beginAttempt(minecraft, AgentAction.EXPLORE, null);
         float currentYaw =
                 minecraft.player.getYRot();
 
@@ -180,9 +302,12 @@ case PLACE_BLOCK -> {
             >= actionEndTime) {
 
         stopMovement(minecraft);
-
-        activeAction =
-                AgentAction.WAIT;
+        GameState before = attempts.getBeforeState();
+        double dx = minecraft.player.getX() - before.getX();
+        double dz = minecraft.player.getZ() - before.getZ();
+        finishAttempt(minecraft, dx * dx + dz * dz > 0.25
+                ? ActionOutcome.SUCCESS : ActionOutcome.FAILURE);
+        activeAction = AgentAction.WAIT;
     }
 }
 
@@ -197,8 +322,8 @@ case PLACE_BLOCK -> {
 
         stopMovement(minecraft);
 
-        PathChoice choice =
-                findBestReachableTree(minecraft);
+        beginAttempt(minecraft, AgentAction.MOVE_TO_RESOURCE, null);
+        PathChoice choice = findBestReachableTree(minecraft);
 
         if (choice == null) {
 
@@ -206,16 +331,16 @@ case PLACE_BLOCK -> {
                     "[AI Agent] No reachable tree found nearby"
             );
 
-            activeAction =
-                    AgentAction.EXPLORE;
-
+            finishAttempt(minecraft, ActionOutcome.FAILURE);
+            activeAction = AgentAction.EXPLORE;
             startExploring(minecraft);
 
             return;
         }
 
-        resourceTarget =
-                choice.target;
+        resourceTarget = choice.target;
+        attempts.setTarget(BuiltInRegistries.ITEM.getKey(minecraft.level
+                .getBlockState(resourceTarget).getBlock().asItem()).toString());
 
         currentPath =
                 choice.path;
@@ -320,6 +445,11 @@ case PLACE_BLOCK -> {
             if (path.isEmpty()) {
                 continue;
             }
+            if (trainingSession) {
+                BlockPos end = path.getLast();
+                Vec3 endpointEye = new Vec3(end.getX() + 0.5, end.getY() + 1.62, end.getZ() + 0.5);
+                if (!canMineFrom(minecraft, candidate, endpointEye)) continue;
+            }
 
             if (bestChoice == null
                     || path.size()
@@ -345,8 +475,27 @@ case PLACE_BLOCK -> {
             Minecraft minecraft
     ) {
 
-        if (minecraft.player == null) {
+        if ((trainingSession && !trainingSessionValid(minecraft))
+                || minecraft.player == null || minecraft.level == null
+                || (attempts.isPending() && minecraft.level != attemptLevel)) {
+            cancel(minecraft);
             return;
+        }
+        lastObservedState = GameState.observe(minecraft);
+        if (attempts.hasTimedOut(System.currentTimeMillis(), ATTEMPT_TIMEOUT_MS)) {
+            finishAttempt(minecraft, ActionOutcome.TIMEOUT);
+            cancel(minecraft);
+            return;
+        }
+        if (CraftingExecutor.isCrafting()) {
+            CraftingExecutor.craft(minecraft);
+            if (!CraftingExecutor.isCrafting()) {
+                if (CraftingExecutor.didTimeOut()) {
+                    finishAttempt(minecraft, ActionOutcome.TIMEOUT);
+                } else {
+                    awaitConfirmation();
+                }
+            }
         }
 
         if (activeAction == AgentAction.EXPLORE) {
@@ -365,6 +514,21 @@ case PLACE_BLOCK -> {
 
             collectResource(minecraft);
         }
+
+        if (attempts.isPending() && confirmationDeadline != 0) {
+            GameState after = GameState.observe(minecraft);
+            boolean success = switch (attempts.getAction()) {
+                case CRAFT, COLLECT_RESOURCE -> attempts.targetWasAcquired(after);
+                case PLACE_BLOCK -> placementTarget != null && minecraft.level
+                        .getBlockState(placementTarget).is(net.minecraft.world.level.block.Blocks.CRAFTING_TABLE);
+                default -> false;
+            };
+            if (success) {
+                finishAttempt(minecraft, ActionOutcome.SUCCESS);
+            } else if (System.currentTimeMillis() >= confirmationDeadline) {
+                finishAttempt(minecraft, ActionOutcome.FAILURE);
+            }
+        }
     }
 
 
@@ -378,7 +542,7 @@ case PLACE_BLOCK -> {
 
         if (resourceTarget == null
                 || currentPath.isEmpty()) {
-
+            finishAttempt(minecraft, ActionOutcome.FAILURE);
             stopMovement(minecraft);
 
             activeAction =
@@ -403,8 +567,8 @@ case PLACE_BLOCK -> {
                     "[AI Agent] Target disappeared"
             );
 
+            finishAttempt(minecraft, ActionOutcome.FAILURE);
             resourceTarget = null;
-
             stopMovement(minecraft);
 
             activeAction =
@@ -442,7 +606,8 @@ case PLACE_BLOCK -> {
                                     + dz * dz
                     );
 
-            if (distance < 0.7) {
+            if (distance < 0.7 && (!trainingSession
+                    || Math.abs(minecraft.player.getY() - node.getY()) < 0.75)) {
                 pathIndex++;
             } else {
                 break;
@@ -458,10 +623,15 @@ case PLACE_BLOCK -> {
                     "[AI Agent] Reached tree - beginning collection"
             );
 
-            activeAction =
-                    AgentAction.COLLECT_RESOURCE;
-
-            beginCollectingResource(minecraft);
+            boolean reached = !trainingSession
+                    || canMineFrom(minecraft, resourceTarget, minecraft.player.getEyePosition());
+            finishAttempt(minecraft, reached ? ActionOutcome.SUCCESS : ActionOutcome.FAILURE);
+            if (trainingSession) {
+                activeAction = AgentAction.WAIT; // The policy, not the executor, chooses whether to mine.
+            } else {
+                activeAction = AgentAction.COLLECT_RESOURCE;
+                beginCollectingResource(minecraft);
+            }
 
             return;
         }
@@ -582,7 +752,7 @@ case PLACE_BLOCK -> {
     private static void rejectCurrentTarget(
             Minecraft minecraft
     ) {
-
+        finishAttempt(minecraft, ActionOutcome.FAILURE);
         stopMovement(minecraft);
 
         if (resourceTarget != null) {
@@ -604,7 +774,8 @@ case PLACE_BLOCK -> {
 
         pathIndex = 0;
 
-        startMovingToResource(minecraft);
+        if (trainingSession) activeAction = AgentAction.WAIT;
+        else startMovingToResource(minecraft);
     }
 
 
@@ -633,14 +804,14 @@ case PLACE_BLOCK -> {
     private static void beginCollectingResource(
             Minecraft minecraft
     ) {
-
+        String targetId = resourceTarget == null ? null : BuiltInRegistries.ITEM.getKey(
+                minecraft.level.getBlockState(resourceTarget).getBlock().asItem()).toString();
+        beginAttempt(minecraft, AgentAction.COLLECT_RESOURCE, targetId);
         stopMovement(minecraft);
 
         if (resourceTarget == null) {
-
-            activeAction =
-                    AgentAction.WAIT;
-
+            finishAttempt(minecraft, ActionOutcome.FAILURE);
+            activeAction = AgentAction.WAIT;
             return;
         }
 
@@ -657,7 +828,7 @@ case PLACE_BLOCK -> {
 
         if (resourceTarget == null
                 || minecraft.level == null) {
-
+            finishAttempt(minecraft, ActionOutcome.FAILURE);
             stopMining(minecraft);
 
             activeAction =
@@ -666,17 +837,15 @@ case PLACE_BLOCK -> {
             return;
         }
 
-        // If the target is no longer a log,
-        // the block was successfully broken.
+        // Disappearance ends the mining input, then inventory confirms collection.
         if (!minecraft.level
                 .getBlockState(resourceTarget)
                 .is(BlockTags.LOGS)) {
 
             stopMining(minecraft);
 
-            System.out.println(
-                    "[AI Agent] Successfully broke log"
-            );
+            // A broken block is not proof that its drop reached inventory.
+            System.out.println("[AI Agent] Log disappeared; waiting for inventory confirmation");
 
             resourceTarget = null;
 
@@ -684,10 +853,7 @@ case PLACE_BLOCK -> {
                     Collections.emptyList();
 
             pathIndex = 0;
-
-            activeAction =
-                    AgentAction.WAIT;
-
+            awaitConfirmation();
             return;
         }
 
@@ -938,8 +1104,8 @@ if (!selectedItemId.equals(
     }
 
 
-    BlockPos placementPos =
-            ground.above();
+    BlockPos placementPos = ground.above();
+    placementTarget = placementPos.immutable();
 
 
     // -----------------------------------------------------
@@ -1128,8 +1294,8 @@ if (!selectedItemId.equals(
 
     public static boolean isBusy() {
 
-        return activeAction
-                != AgentAction.WAIT;
+        return activeAction != AgentAction.WAIT
+                || attempts.isPending() || CraftingExecutor.isCrafting();
     }
 
 

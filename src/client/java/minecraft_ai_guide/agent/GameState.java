@@ -11,6 +11,7 @@ import java.util.Map;
 public class GameState {
 
     private final Map<String, Integer> inventory;
+    private final int logCount;
 
     private final double x;
     private final double y;
@@ -34,7 +35,16 @@ public class GameState {
             boolean craftingTableNearby
     ) {
 
-        this.inventory = inventory;
+        this(inventory, x, y, z, craftingTableNearby, inventory.entrySet().stream()
+                .filter(e -> e.getKey().endsWith("_log") || e.getKey().endsWith("_stem")
+                        || e.getKey().endsWith("_wood") || e.getKey().endsWith("_hyphae"))
+                .mapToInt(Map.Entry::getValue).sum());
+    }
+
+    public GameState(Map<String, Integer> inventory, double x, double y, double z,
+            boolean craftingTableNearby, int logCount) {
+        this.logCount = logCount;
+        this.inventory = Map.copyOf(inventory);
 
         this.x = x;
         this.y = y;
@@ -74,6 +84,7 @@ public class GameState {
         // INVENTORY
         // -----------------------------------------------------
 
+        int logs = 0;
         for (int i = 0;
              i < minecraft.player
                      .getInventory()
@@ -90,6 +101,7 @@ public class GameState {
             }
 
 
+            if (stack.is(net.minecraft.tags.ItemTags.LOGS)) logs += stack.getCount();
             String itemId =
                     BuiltInRegistries.ITEM
                             .getKey(
@@ -121,7 +133,8 @@ public class GameState {
                 minecraft.player.getX(),
                 minecraft.player.getY(),
                 minecraft.player.getZ(),
-                craftingTableNearby
+                craftingTableNearby,
+                logs
         );
     }
 
@@ -189,6 +202,8 @@ public class GameState {
     // =========================================================
     // GETTERS
     // =========================================================
+
+    public int getLogCount() { return logCount; }
 
     public Map<String, Integer> getInventory() {
 

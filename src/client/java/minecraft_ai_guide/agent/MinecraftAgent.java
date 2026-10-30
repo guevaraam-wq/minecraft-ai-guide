@@ -11,9 +11,6 @@ public class MinecraftAgent {
     private final AgentGoalManager goalManager =
             new AgentGoalManager();
 
-    private GameState previousState;
-    private AgentAction previousAction;
-    private String previousActionTarget;
 
     private boolean running = false;
 
@@ -31,17 +28,15 @@ private static final int MAX_DECISIONS = 30;
 
     public void start(Minecraft minecraft) {
 
-        if (minecraft.player == null) {
+        if (minecraft.player == null || minecraft.level == null) {
             return;
         }
 
         running = true;
         decisionCount = 0;
 
-        previousState =
-                GameState.observe(minecraft);
-
-        previousAction = null;
+        ActionExecutor.cancel(minecraft);
+        collectCompletedAttempts();
 
         lastDecisionTime = 0;
 
@@ -55,8 +50,9 @@ private static final int MAX_DECISIONS = 30;
     // STOP
     // =========================================================
 
-    public void stop() {
-
+    public void stop(Minecraft minecraft) {
+        ActionExecutor.cancel(minecraft);
+        collectCompletedAttempts();
         running = false;
 
         System.out.println(
@@ -75,220 +71,41 @@ private static final int MAX_DECISIONS = 30;
     // =========================================================
 
     public void update(Minecraft minecraft) {
-
-        if (!running
-                || minecraft.player == null) {
+        if (!running) return;
+        if (minecraft.player == null || minecraft.level == null) {
+            stop(minecraft);
             return;
         }
 
-        /*
-         * Allow the currently executing action
-         * to continue.
-         */
+        // Executors close attempts at their actual completion boundary, before
+        // another action can start. Crafting/pickups include bounded confirmation.
         ActionExecutor.update(minecraft);
+        collectCompletedAttempts();
+        if (ActionExecutor.isBusy()) return;
 
-        if (ActionExecutor.isBusy()) {
-            return;
-        }
-        /*
- * Finish any crafting operation that is
- * currently waiting for its result.
- */
-if (CraftingExecutor.isCrafting()) {
-
-    CraftingExecutor.craft(minecraft);
-
-    return;
-}
-
-        long now =
-                System.currentTimeMillis();
-
-        if (now - lastDecisionTime
-                < DECISION_INTERVAL) {
+        long now = System.currentTimeMillis();
+        if (now - lastDecisionTime < DECISION_INTERVAL) return;
+        if (++decisionCount > MAX_DECISIONS) {
+            stop(minecraft);
             return;
         }
 
-
-        // -----------------------------------------------------
-        // Observe current state
-        // -----------------------------------------------------
-
-        GameState currentState =
-                GameState.observe(minecraft);
-
-
-        // -----------------------------------------------------
-        // Determine current goal
-        // -----------------------------------------------------
-
-        AgentGoal currentGoal =
-                goalManager.evaluate(
-                        currentState
-                );
-
-        System.out.println(
-                "[AI Agent] Overall goal: "
-                        + goalManager.getOverallGoal()
-        );
-
-        System.out.println(
-                "[AI Agent] Current subgoal: "
-                        + currentGoal
-        );
-
-
-        // -----------------------------------------------------
-        // Evaluate previous action
-        if (previousState != null
-        && previousAction != null) {
-
-    double reward =
-            RewardSystem.calculate(
-                    previousState,
-                    currentState
-            );
-
-    AgentExperience experience =
-            new AgentExperience(
-                    previousState,
-                    previousAction,
-                    currentState,
-                    reward,
-                    previousActionTarget
-            );
-            /*
- * A crafting attempt should only receive a
- * positive learning signal when the item it
- * intended to craft was actually acquired.
- */
-if (previousAction == AgentAction.CRAFT
-        && previousActionTarget != null) {
-
-    if (experience.targetWasAcquired()) {
-
-        reward += 0.50;
-
-        System.out.println(
-                "[AI Learning] Successful craft of "
-                        + previousActionTarget
-        );
-
-    } else {
-
-        reward -= 0.50;
-
-        System.out.println(
-                "[AI Learning] Failed craft of "
-                        + previousActionTarget
-        );
+        GameState currentState = GameState.observe(minecraft);
+        AgentGoal goal = goalManager.evaluate(currentState);
+        AgentAction action = chooseAction(currentState, goal);
+        ActionExecutor.execute(minecraft, action);
+        collectCompletedAttempts();
+        lastDecisionTime = now;
     }
 
-    /*
-     * Recreate the experience with the corrected
-     * recipe-specific reward.
-     */
-    experience =
-            new AgentExperience(
-                    previousState,
-                    previousAction,
-                    currentState,
-                    reward,
-                    previousActionTarget
-            );
-}
-
-    memory.add(
-            experience
-    );
-
-    System.out.println(
-            "[AI Agent] Result: "
-                    + previousAction
-                    + " reward="
-                    + reward
-    );
-
-    if (previousActionTarget != null) {
-
-        System.out.println(
-                "[AI Agent] Action target: "
-                        + previousActionTarget
-                        + " acquired="
-                        + experience.targetWasAcquired()
-        );
-    }
-}
-        
-
-
-        // -----------------------------------------------------
-        // Choose next action
-        // -----------------------------------------------------
-        decisionCount++;
-
-if (decisionCount > MAX_DECISIONS) {
-
-    System.out.println(
-            "[AI Agent] Training session complete - "
-                    + "automatic safety stop."
-    );
-
-    stop();
-    ActionExecutor.stopMovement(minecraft);
-
-    return;
-}
-        AgentAction nextAction =
-                chooseAction(
-                        currentState,
-                        currentGoal
-                );
-
-        System.out.println(
-                "[AI Agent] Chose: "
-                        + nextAction
-        );
-
-
-        // -----------------------------------------------------
-        // Execute action
-        // -----------------------------------------------------
-
-        ActionExecutor.execute(
-                minecraft,
-                nextAction
-        );
-
-
-        // -----------------------------------------------------
-        // Remember state/action pair
-        // -----------------------------------------------------
-
-        previousState =
-        currentState;
-
-previousAction =
-        nextAction;
-
-/*
- * Remember what a CRAFT action was trying
- * to produce so the resulting experience
- * can be associated with that item.
- */
-if (nextAction == AgentAction.CRAFT) {
-
-    previousActionTarget =
-            CraftingExecutor.getLastCraftTarget();
-
-} else {
-
-    previousActionTarget =
-            null;
-}
-
-lastDecisionTime =
-        now;
+    private void collectCompletedAttempts() {
+        for (AgentExperience experience : ActionExecutor.drainExperiences()) {
+            memory.add(experience);
+            System.out.println("[AI Agent] " + experience.getAction()
+                    + " outcome=" + experience.getOutcome()
+                    + " target=" + experience.getActionTarget()
+                    + " reward=" + experience.getReward());
+        }
     }
 
 
@@ -543,8 +360,8 @@ if (CraftingExecutor.needsCraftingTable(
              * and goal-specific.
              */
 
-            if (experience.getReward()
-                    > bestReward) {
+            if (experience.getOutcome() != ActionOutcome.CANCELLED
+                    && experience.getReward() > bestReward) {
 
                 bestReward =
                         experience.getReward();

@@ -6,6 +6,9 @@ public class AgentExperience {
     private final AgentAction action;
     private final GameState afterState;
     private final double reward;
+    private final ActionOutcome outcome;
+    private final long startedAt;
+    private final long endedAt;
 
     /*
      * Optional detail about the action.
@@ -26,9 +29,15 @@ public class AgentExperience {
             AgentAction action,
             GameState afterState,
             double reward,
-            String actionTarget
+            String actionTarget,
+            ActionOutcome outcome,
+            long startedAt,
+            long endedAt
     ) {
 
+        this.outcome = java.util.Objects.requireNonNull(outcome);
+        this.startedAt = startedAt;
+        this.endedAt = endedAt;
         this.beforeState =
                 beforeState;
 
@@ -45,6 +54,14 @@ public class AgentExperience {
                 actionTarget;
     }
 
+
+    public ActionOutcome getOutcome() { return outcome; }
+
+    public long getStartedAt() { return startedAt; }
+
+    public long getEndedAt() { return endedAt; }
+
+    public boolean succeeded() { return outcome == ActionOutcome.SUCCESS; }
 
     public GameState getBeforeState() {
         return beforeState;
